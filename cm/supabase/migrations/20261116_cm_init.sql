@@ -72,3 +72,6 @@ do $$ declare t text; begin
   end loop;
 end $$;
 create policy "cm_world_broadcast_read" on realtime.messages for select to authenticated using (realtime.topic() = 'cm-world' and extension = 'broadcast');
+
+-- voting pergantian tahun (semua pemain online harus setuju)
+alter table public.cm_world add column if not exists adv jsonb;

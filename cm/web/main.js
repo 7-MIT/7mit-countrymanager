@@ -2,14 +2,17 @@
 import { sb, S, SESSION, SB_URL, SB_KEY, $, $$, esc, ic, fmt, usd, cty, toast, modal, closeModal, api, act, refreshIcons, animateNumbers, ago, isPres, myCode, REGION_ID } from './core.js';
 import { PAGES, hooks, showVote, tfPreview, tickClock, mapMetrics } from './pages.js';
 import * as P from './pages.js';
+import { Globe } from './globe.js';
+import { Country3D, loadOutline } from './country3d.js';
+import { AREAS } from './areas.js';
 
 const app = $('#app');
 const st = document.createElement('style'); st.textContent = '.osm-dark .leaflet-tile-pane{filter:invert(1) hue-rotate(185deg) brightness(.82) contrast(.92) saturate(.6)}'; document.head.appendChild(st);
 
 // ================= LOGIN =================
 function showGate(msg) {
-  document.title = 'Masuk — Country Manager';
-  app.innerHTML = `<div class="gate"><div class="card box"><div class="logo">${ic('globe-2')}</div><h1>Country Manager</h1>
+  document.title = 'Masuk — country.7mit';
+  app.innerHTML = `<div class="gate"><div class="card box"><div class="logo"><span class="wordmark" style="font-size:30px">7</span></div><h1 class="wordmark">country<b>.7mit</b></h1>
   <p>Dunia bersama untuk semua pemain: jadi presiden atau warga, kelola ekonomi, dagang, politik, dan diplomasi. Anda harus masuk lebih dulu untuk bermain.</p>
   <button class="btn pri big" id="gLogin">${ic('log-in')} Masuk dengan Google</button>
   ${msg ? `<div class="banner" style="margin-top:16px">${ic('triangle-alert')}<div>${esc(msg)}</div></div>` : ''}
@@ -21,9 +24,9 @@ function showGate(msg) {
 }
 
 // ================= SHELL =================
-const NAV_GROUPS = [['dash', 'map', 'leader', 'news'], ['policy', 'trade', 'treasury', 'politics', 'gov', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
+const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['policy', 'trade', 'treasury', 'politics', 'gov', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
 function shell() {
-  app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo">${ic('globe-2')}</div>Country Manager</div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
+  app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
    <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
    <div class="main"><div class="top"><button class="iconbtn menuBtn" data-act="menu" aria-label="Menu">${ic('menu')}</button>
     <div class="search">${ic('search')}<input id="gSearch" type="search" placeholder="Cari negara atau teritori…" autocomplete="off"><div class="sres hidden" id="sRes"></div></div>
@@ -47,10 +50,10 @@ function updateChrome() {
   $$('[data-pend]').forEach(d => { d.textContent = S.pending; d.classList.toggle('hidden', !S.pending); });
   const n = S.notifs.filter(x => !x.read).length; const bn = $('#bellN'); bn.textContent = n; bn.classList.toggle('hidden', !n);
   updateConn(); updateAdv(); tickTop();
-  const canAdv = isPres() || S.me.admin; $('#advBtn').classList.toggle('hidden', !canAdv);
+  const canAdv = isPres() || S.me.admin || S.adv?.status === 'open'; $('#advBtn').classList.toggle('hidden', !canAdv);
 }
 function updateConn() { const ok = S.online && Date.now() - S.lastSync < 14000, el = $('#connChip'); if (!el) return; el.className = 'chip ' + (ok ? 'ok' : 'off'); const t = ok ? (S.rt ? 'Real-time' : 'Terhubung (5 dtk)') : 'Terputus'; if (el.dataset.k !== t) { el.dataset.k = t; el.innerHTML = `${ic(ok ? 'wifi' : 'wifi-off')} <span>${t}</span>`; refreshIcons(); } }
-function updateAdv() { const b = $('#advBtn'); if (!b) return; const left = S.world.lastAdvance ? Math.ceil(((S.world.cooldownMs || 45000) - (Date.now() - new Date(S.world.lastAdvance).getTime())) / 1000) : 0; b.disabled = S.world.paused || left > 0 || S.world.advancing; b.title = S.world.paused ? 'Waktu dihentikan admin UN' : left > 0 ? `Jeda penggunaan ${left} detik` : 'Proses ekonomi, politik, diplomasi, dan pemilu'; const t = S.world.advancing ? 'Memproses…' : S.world.paused ? 'Waktu dihentikan' : left > 0 ? `Jeda ${left} dtk` : 'Majukan 1 tahun'; if (b.dataset.k !== t) { b.dataset.k = t; b.innerHTML = `${ic(S.world.paused ? 'pause' : left > 0 ? 'hourglass' : 'fast-forward')} ${t}`; refreshIcons(); } }
+function updateAdv() { const b = $('#advBtn'); if (!b) return; const left = S.world.lastAdvance ? Math.ceil(((S.world.cooldownMs || 45000) - (Date.now() - new Date(S.world.lastAdvance).getTime())) / 1000) : 0; const voting = S.adv?.status === 'open'; b.disabled = S.world.paused || left > 0 || S.world.advancing || voting; b.title = voting ? 'Voting berjalan, ikut memilih' : S.world.paused ? 'Waktu dihentikan admin UN' : left > 0 ? `Jeda penggunaan ${left} detik` : 'Proses ekonomi, politik, diplomasi, dan pemilu'; const t = voting ? `Voting ${S.adv.yes}/${S.adv.total}` : S.world.advancing ? 'Memproses…' : S.world.paused ? 'Waktu dihentikan' : left > 0 ? `Jeda ${left} dtk` : 'Majukan 1 tahun'; if (b.dataset.k !== t) { b.dataset.k = t; b.innerHTML = `${ic(voting ? 'vote' : S.world.paused ? 'pause' : left > 0 ? 'hourglass' : 'fast-forward')} ${t}`; refreshIcons(); } }
 function tickTop() { const c = cty(S.sel); const el = $('#realClock'); if (el && c) el.textContent = new Date(Date.now() + c.tz * 3600e3).toISOString().slice(11, 19) + ` (UTC${c.tz >= 0 ? '+' : ''}${c.tz})`; }
 
 // ================= RENDER =================
@@ -59,12 +62,12 @@ export function render() {
   let html; try { html = Pg.r(); } catch (e) { console.error(e); html = `<div class="empty">${ic('circle-alert')}<div>Gagal menampilkan halaman: ${esc(e.message)}</div></div>`; }
   const ann = S.world.announcement ? `<div class="banner">${ic('megaphone')}<div><b>Pengumuman UN:</b> ${esc(S.world.announcement)}</div></div>` : '';
   $('#pg').innerHTML = `<div class="page">${S.page !== 'map' && S.page !== 'dash' ? `<div class="row wrap between"><h1 style="font-size:22px;display:flex;gap:10px;align-items:center">${ic(Pg.i)} ${Pg.t}</h1>${cty(S.sel) ? `<span class="tag a">${cty(S.sel).flag} ${esc(cty(S.sel).name)}</span>` : ''}</div>` : ''}${ann}${html}</div>`;
-  refreshIcons(); animateNumbers($('#pg')); try { Pg.after?.(); } catch (e) { console.error(e); } tickClock(); window.scrollTo(0, y); document.title = `${Pg.t} — Country Manager`; updateChrome();
+  refreshIcons(); animateNumbers($('#pg')); try { Pg.after?.(); } catch (e) { console.error(e); } tickClock(); window.scrollTo(0, y); document.title = `${Pg.t} — country.7mit`; updateChrome();
 }
 hooks.render = render;
-export function go(p) { if (S.page === 'map' && p !== 'map') destroyMap(); S.page = p; S.dirty = false; $('#side')?.classList.remove('open'); if (p === 'news') loadNews(); if (p === 'map') loadElections(); render(); window.scrollTo(0, 0); }
+export function go(p) { if (S.page === 'map' && p !== 'map') destroyMap(); if (S.page === 'land' && p !== 'land') destroyLand(); S.page = p; S.dirty = false; $('#side')?.classList.remove('open'); if (p === 'news') loadNews(); if (p === 'map') loadElections(); render(); window.scrollTo(0, 0); }
 hooks.go = go;
-function softRender() { if (S.dirty || !$('#pg')) return; const a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && $('#pg').contains(a)) return; if (S.page === 'map') { updateMapStyle(); return; } render(); }
+function softRender() { if (S.dirty || !$('#pg')) return; const a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && $('#pg').contains(a)) return; if (S.page === 'map') { updateMapStyle(); return; } if (S.page === 'land') return; render(); }
 
 // ================= DATA =================
 let lastDetail = '', lastMine = '';
@@ -85,7 +88,7 @@ export async function sync(force) {
     const firstTime = !S.since;
     if (d.full) S.countries.clear(); d.countries.forEach(c => S.countries.set(c.code, c)); if (d.since) S.since = d.since;
     const prevPres = S.me?.president, prevAnn = S.world.announcement;
-    S.me = d.me; S.world = d.world; S.visitors = d.visitors;
+    S.me = d.me; S.world = d.world; S.visitors = d.visitors; handleAdv(d.adv);
     if (d.pending > S.pending && !firstTime) pushNotif({ id: 'pend' + Date.now(), icon: 'inbox', title: 'Penawaran masuk', body: `${d.pending} penawaran menunggu jawaban Anda` });
     S.pending = d.pending;
     if (d.world.announcement && d.world.announcement !== S.lastAnn) { if (S.lastAnn !== '' || !firstTime) pushNotif({ id: 'ann' + d.world.announcement, icon: 'megaphone', title: 'Pengumuman UN', body: d.world.announcement }); S.lastAnn = d.world.announcement; }
@@ -105,12 +108,21 @@ async function subscribeRealtime() {
 }
 
 // ================= PETA =================
+let GL = null, rankC = new Map();
 let LMAP = null, markers = new Map(), routes = [], ships = [], raf = 0;
-function ramp(t) { const st = [[19, 78, 74], [45, 212, 191], [253, 224, 71], [251, 113, 133]], x = Math.max(0, Math.min(0.999, t)) * 3, i = Math.floor(x), f = x - i; const a = st[i], b = st[i + 1]; return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(',')})`; }
+function ramp(t) { const st = [[255, 227, 210], [243, 176, 74], [255, 107, 124], [160, 29, 45]], x = Math.max(0, Math.min(0.999, t)) * 3, i = Math.floor(x), f = x - i; const a = st[i], b = st[i + 1]; return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(',')})`; }
 function metricVal(c) { if (S.metric === 'gdp') return Math.log10(c.gdp + 1); if (S.metric === 'growth') return c.growth; if (S.metric === 'infl') return Math.min(c.infl, 40); const e = S.elections.find(x => x.country === c.code); return e ? e.result.share : NaN; }
-function destroyMap() { cancelAnimationFrame(raf); if (LMAP) { LMAP.remove(); LMAP = null; } markers.clear(); routes = []; ships = []; }
+function destroyMap() { cancelAnimationFrame(raf); if (GL) { GL.dispose(); GL = null; } if (LMAP) { LMAP.remove(); LMAP = null; } markers.clear(); routes = []; ships = []; }
+function computeRank() { const vals = [...S.countries.values()].map(metricVal).filter(Number.isFinite).sort((a, b) => a - b); rankC = new Map(); for (const c of S.countries.values()) { const v = metricVal(c); rankC.set(c.code, Number.isFinite(v) && vals.length ? vals.indexOf(v) / Math.max(1, vals.length - 1) : null); } }
+const colorOf3 = (c) => { const t = rankC.get(c.code); return t == null ? '#334155' : ramp(t); };
+function init3D(el) {
+  el.innerHTML = ''; el.style.position = 'relative'; const tip = document.createElement('div'); tip.className = 'gtip hidden'; el.appendChild(tip); computeRank();
+  try { GL = new Globe(el, { onPick: (c) => pick(c, true), onHover: (c, e) => { if (!c) { tip.classList.add('hidden'); return; } const x = cty(c), r = el.getBoundingClientRect(); tip.innerHTML = `${x.flag} <b>${esc(x.name)}</b><br><span class="sub">PDB ${usd(x.gdp)} · ${fmt(x.growth, 1)}% · ${esc(x.president)}</span>`; tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px'; tip.classList.remove('hidden'); }, colorOf: colorOf3, sizeOf: (c) => 0.032 + Math.log10(c.gdp + 1) * 0.03 }); }
+  catch (e) { console.error(e); S.mapMode = '2d'; toast('WebGL tidak tersedia, memakai peta 2D', 'warn'); render(); return; }
+  GL.setCountries([...S.countries.values()]); GL.setSelected(S.sel); GL.focus(S.sel, 15); drawRoutes();
+}
 function initMap() {
-  destroyMap(); const el = $('#map'); if (!el || !window.L) { if (el) el.innerHTML = `<div class="empty">${ic('map-off')}<div>Pustaka peta gagal dimuat.</div></div>`; return; }
+  destroyMap(); const el = $('#map'); if (el && S.mapMode !== '2d') { init3D(el); return; } if (!el || !window.L) { if (el) el.innerHTML = `<div class="empty">${ic('map-off')}<div>Pustaka peta gagal dimuat.</div></div>`; return; }
   LMAP = L.map(el, { worldCopyJump: true, minZoom: 2, maxZoom: 9, zoomControl: true, attributionControl: true }).setView([20, 10], 2);
   if (S.world.mapbox) L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${S.world.mapbox}`, { tileSize: 512, zoomOffset: -1, attribution: '© Mapbox © OpenStreetMap' }).addTo(LMAP);
   else { el.classList.add('osm-dark'); L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(LMAP); }
@@ -119,12 +131,24 @@ function initMap() {
   setTimeout(() => LMAP && LMAP.invalidateSize(), 200); loopShips();
 }
 hooks.initMap = initMap;
+let LAND = null, landToken = 0;
+function destroyLand() { landToken++; if (LAND) { LAND.dispose(); LAND = null; } }
+hooks.initLand = async () => {
+  destroyLand(); const my = ++landToken, el = $('#land'), c = cty(S.sel); if (!el || !c) return; const msg = $('#landMsg');
+  try {
+    const outline = await loadOutline(c.code); if (my !== landToken) return;
+    LAND = new Country3D(el, { code: c.code, name: c.name, lat: c.lat, lng: c.lng, outline, mode: S.landMode || '3d', mapbox: S.world.mapbox, onStatus: (t) => { if (msg) { msg.innerHTML = t ? `${ic('loader-circle', 'spin')} ${t}` : ''; msg.style.display = t ? '' : 'none'; refreshIcons(); } } }); LAND.pop = c.pop;
+    const sc = $('#landScale'); if (sc) sc.innerHTML = `${ic('ruler')} Bentang ±${fmt(LAND.widthKm)} × ${fmt(LAND.heightKm)} km · 1 satuan = 100 km`; refreshIcons(); if (msg && (S.landMode || '3d') === '3d') msg.style.display = 'none';
+  } catch (e) { if (msg) msg.innerHTML = `${ic('circle-alert')} ${esc(e.message || 'Gagal memuat wilayah')}`; refreshIcons(); }
+};
 function updateMapStyle() {
+  if (GL) { computeRank(); GL.refresh(); GL.setSelected(S.sel); drawRoutes(); return; }
   if (!LMAP) return; const vals = [...S.countries.values()].map(metricVal).filter(Number.isFinite).sort((a, b) => a - b);
   for (const [code, m] of markers) { const c = cty(code); if (!c) continue; const v = metricVal(c); const t = Number.isFinite(v) && vals.length ? vals.indexOf(v) / Math.max(1, vals.length - 1) : null; m.setStyle({ fillColor: t == null ? '#334155' : ramp(t), weight: code === S.sel ? 3 : 1, color: code === S.sel ? '#fff' : '#0b1218' }); if (code === S.sel) m.bringToFront(); }
   drawRoutes();
 }
 function drawRoutes() {
+  if (GL) { const tr = (S.D?.trades || []).filter(o => o.kind === 'trade' && o.status === 'active'); GL.setRoutes(tr.map(o => ({ from: [cty(o.from_c)?.lat, cty(o.from_c)?.lng], to: [cty(o.to_c)?.lat, cty(o.to_c)?.lng] })).filter(r => r.from[0] != null && r.to[0] != null)); return; }
   if (!LMAP) return; routes.forEach(r => LMAP.removeLayer(r)); ships.forEach(s => LMAP.removeLayer(s.m)); routes = []; ships = [];
   const src = cty(S.sel); const tr = (S.D?.trades || []).filter(o => o.kind === 'trade' && o.status === 'active'); if (!src) return;
   for (const o of tr) { const a = cty(o.from_c), b = cty(o.to_c); if (!a || !b) continue; const mid = [(a.lat + b.lat) / 2 + Math.abs(a.lng - b.lng) * 0.08, (a.lng + b.lng) / 2]; const pts = []; for (let t = 0; t <= 1; t += 0.05) pts.push(bez([a.lat, a.lng], mid, [b.lat, b.lng], t)); routes.push(L.polyline(pts, { color: '#fbbf24', weight: 1.5, opacity: .6, dashArray: '4 6' }).addTo(LMAP)); const m = L.marker(pts[0], { icon: L.divIcon({ className: '', html: '<div class="ship"></div>', iconSize: [10, 10] }), interactive: false }).addTo(LMAP); ships.push({ m, pts, t: Math.random(), sp: 0.04 + Math.random() * 0.03 }); }
@@ -137,13 +161,16 @@ export function pick(code, fromMap) {
   if (!S.countries.has(code)) return; S.sel = code; S.D = null; lastDetail = ''; S.dirty = false;
   if (S.page === 'leader' || S.page === 'dash' && !fromMap) { if (S.page === 'leader') S.page = 'dash'; }
   loadSel(true).then(() => { if (S.page === 'map') { drawRoutes(); } }); if (S.page === 'news') loadNews();
+  if (S.page === 'map' && GL) { GL.setSelected(code); GL.focus(code, 14); }
   if (S.page === 'map' && LMAP) { const c = cty(code); LMAP.flyTo([c.lat, c.lng], Math.max(LMAP.getZoom(), 4), { duration: .8 }); updateMapStyle(); }
-  render(); if (S.page === 'map' && LMAP) { /* peta dipertahankan */ }
+  render(); if (false) {}
 }
 
 // ================= ACTIONS =================
 const val = (id) => $('#' + id)?.value;
 const A = {
+  landMode: (el) => { S.landMode = el.dataset.v; if (LAND) { const m = $('#landMsg'); if (m) { m.style.display = ''; } LAND.setMode(S.landMode); $$('[data-act=landMode]').forEach(b => b.classList.toggle('on', b.dataset.v === S.landMode)); } else render(); },
+  mapMode: (el) => { S.mapMode = el.dataset.v; destroyMap(); render(); },
   menu: () => $('#side').classList.toggle('open'),
   logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
   help: () => tutorial(0),
@@ -154,8 +181,11 @@ const A = {
   citizenSel: (el) => act(el, 'become_citizen', { code: S.sel }, `Anda kini warga ${cty(S.sel)?.name}`, async () => { await sync(true); await loadSel(true); render(); }),
   leaveCit: (el) => act(el, 'leave_citizenship', {}, 'Kewarganegaraan dilepas', async () => { await sync(true); render(); }),
   bell: () => { const b = $('#notifBox'); b.classList.toggle('hidden'); if (!b.classList.contains('hidden')) { renderNotifs(); S.notifs.forEach(n => n.read = true); updateChrome(); } },
-  advanceAsk: () => modal({ title: 'Majukan 1 tahun?', icon: 'fast-forward', body: `<p>Tahun dunia akan maju dari <b>${S.world.year}</b> ke <b>${S.world.year + 1}</b>. Ekonomi, politik, diplomasi, pemilu, dan keputusan NPC diproses untuk <b>seluruh negara</b>. Setelah ini ada jeda penggunaan sebelum tahun dapat dimajukan lagi.</p>`, actions: [{ label: 'Majukan', cls: 'pri', icon: 'check', fn: () => A.advance() }, { label: 'Batal' }] }),
-  advance: async () => { const b = $('#advBtn'); S.world.advancing = true; updateAdv(); const r = await act(b, 'advance_year', {}, (x) => `Tahun ${x.year} dimulai`, async () => { await reload(); }); S.world.advancing = false; if (r) { showReport(); } updateChrome(); },
+  advanceAsk: () => S.adv?.status === 'open' ? advModal(true) : modal({ title: 'Ajukan voting majukan 1 tahun', icon: 'vote', body: `<p>Seluruh pemain yang sedang <b>online</b> (${S.visitors} orang) harus memilih. Jika <b>semua setuju</b>, tahun dunia langsung maju dari <b>${S.world.year}</b> ke <b>${S.world.year + 1}</b> dan semua negara diproses. Satu penolakan membatalkan voting. Voting berakhir dalam 60 detik. Bila hanya Anda yang online, tahun langsung maju.</p>`, actions: [{ label: 'Mulai voting', cls: 'pri', icon: 'check', fn: () => A.advStart() }, { label: 'Batal' }] }),
+  advStart: async () => { const b = $('#advBtn'); const r = await act(b, 'advance_start', {}, (x) => x.advanced ? 'Seluruh pemain setuju — tahun dimajukan' : 'Voting dimulai. Menunggu semua pemain online.', async (x) => { await reload(); if (x.advanced) showReport(); else if (x.adv) handleAdv(x.adv, true); }); },
+  advVote: (el) => act(null, 'advance_vote', { yes: el.dataset.y === '1' }, (x) => x.status === 'rejected' ? 'Anda menolak. Voting dibatalkan.' : x.advanced ? 'Semua setuju — tahun dimajukan' : 'Suara Anda tercatat', async (x) => { await sync(true); if (x.advanced) { await reload(); showReport(); } }),
+  advOpen: () => advModal(true),
+  advance: async () => { const b = $('#advBtn'); S.world.advancing = true; updateAdv(); const r = await act(b, 'advance_year', {}, (x) => `Tahun ${x.year} dimulai (paksa admin)`, async () => { await reload(); }); S.world.advancing = false; if (r) { showReport(); } updateChrome(); },
   applyPolicy: (el) => { const patch = {}, c = P_M(); $$('[data-pol]').forEach(i => { const k = i.dataset.pol; if (+i.value !== c.pol[k]) patch[k] = +i.value; }); if (!Object.keys(patch).length) return toast('Tidak ada perubahan', 'warn'); act(el, 'set_policy', { policy: patch }, null, async (r) => { await loadMine(true); S.dirty = false; render(); if (r.vote) showVote(r.vote.passed ? 'Parlemen menyetujui' : 'Parlemen menolak', r.vote, r.note); else toast('Kebijakan diterapkan'); }); },
   resetPolicy: () => { S.dirty = false; render(); },
   proposeTrade: (el) => act(el, 'propose_trade', (() => { const c = P_M(), v = parseFloat(val('trVal')), usdB = val('trCur') === 'USD' ? v : v / c.fx; return { to: val('trTo'), sector: val('trSec'), value: usdB, tariffTo: +val('trT1'), tariffFrom: +val('trT2') }; })(), (r) => r.note || 'Penawaran dikirim', async () => { await loadMine(true); S.dirty = false; render(); }),
@@ -202,8 +232,33 @@ const P_M = () => S.M.country;
 function showReport() { const r = S.M?.country?.report || S.D?.country?.report; if (!r) return; modal({ title: `Laporan Akhir Tahun ${r.year}`, icon: 'newspaper', wide: true, body: `<div class="stack">${r.lines.map(l => `<div class="item">${esc(l)}</div>`).join('')}</div><div class="sub" style="margin-top:10px">Seluruh isi laporan adalah bagian dari simulasi.</div>`, actions: [{ label: 'Lihat Laporan Lengkap', icon: 'newspaper', fn: () => go('report') }, { label: 'Tutup', cls: 'pri' }] }); }
 function renderNotifs() { const b = $('#notifBox'); b.innerHTML = `<div class="row between" style="margin-bottom:8px"><b>Notifikasi</b>${'Notification' in window && Notification.permission !== 'granted' ? `<button class="btn sm" id="notifPerm">${ic('bell-ring')} Izinkan notifikasi browser</button>` : `<span class="tag g">${ic('bell-ring')} Notifikasi browser aktif</span>`}</div>${S.notifs.length ? `<div class="stack">${S.notifs.map(n => `<div class="item"><b>${ic(n.icon || 'bell')} ${esc(n.title)}</b><div class="sub">${esc(n.body || '')} · ${ago(n.ts)}</div></div>`).join('')}</div>` : `<div class="empty">${ic('bell-off')}<div>Belum ada notifikasi.</div></div>`}`; refreshIcons(); const p = $('#notifPerm'); if (p) p.onclick = async () => { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Notifikasi browser diaktifkan' : 'Izin notifikasi tidak diberikan', r === 'granted' ? 'ok' : 'warn'); renderNotifs(); }; }
 
+// ================= VOTING PERGANTIAN TAHUN =================
+let advSeen = 0, advDismissed = 0, advTimer = 0;
+function advBody() {
+  const a = S.adv; if (!a) return ''; const left = Math.max(0, Math.ceil((a.expires - Date.now()) / 1000));
+  if (a.status === 'open') return `<p><b>${esc(a.by)}</b> mengajukan memajukan tahun dunia dari <b>${S.world.year}</b> ke <b>${S.world.year + 1}</b>. Tahun hanya maju bila <b>semua pemain online setuju</b>.</p><div class="row between sub"><span>${ic('users-round')} Setuju ${a.yes} dari ${a.total} pemain online</span><span>${ic('timer')} ${left} dtk</span></div><div class="bar" style="margin:8px 0 14px"><i style="width:${a.total ? a.yes / a.total * 100 : 0}%;background:var(--acc)"></i></div>${a.mine ? `<div class="banner info">${ic('check-check')} Anda memilih <b>${a.mine === 'yes' ? 'setuju' : 'menolak'}</b>. Menunggu pemain lain…</div>` : `<div class="row wrap"><button class="btn pri" data-act="advVote" data-y="1">${ic('thumbs-up')} Setuju</button><button class="btn red" data-act="advVote" data-y="0">${ic('thumbs-down')} Tolak</button></div>`}`;
+  return `<p>${a.status === 'done' ? 'Semua setuju. Tahun berhasil dimajukan.' : a.status === 'rejected' ? `Voting dibatalkan: ${esc(a.rejectedBy || 'seorang pemain')} menolak.` : a.status === 'expired' ? 'Voting kedaluwarsa — tidak semua pemain online setuju tepat waktu.' : a.status === 'failed' ? 'Voting disetujui tetapi gagal diproses: ' + esc(a.error || '') : 'Voting disetujui…'}</p>`;
+}
+function advModal(force) {
+  const a = S.adv; if (!a || a.status !== 'open') return; const exist = $('#advBody');
+  if (exist) { exist.innerHTML = advBody(); refreshIcons(); return; }
+  if (!force && advDismissed === a.id) return;
+  modal({ title: 'Voting: majukan 1 tahun', icon: 'vote', body: `<div id="advBody">${advBody()}</div>`, actions: [{ label: 'Tutup (tetap berjalan)', fn: () => { advDismissed = a.id; } }] });
+  const m = $('#modal'); m.onclick = (e) => { if (e.target === m) { advDismissed = a.id; closeModal(); } };
+}
+function handleAdv(adv, force) {
+  const prev = S.adv; S.adv = adv;
+  if (adv && adv.status === 'open') { advModal(force); clearInterval(advTimer); advTimer = setInterval(() => { if (S.adv?.status !== 'open') { clearInterval(advTimer); return; } const b = $('#advBody'); if (b) { b.innerHTML = advBody(); refreshIcons(); } updateAdv(); }, 1000); }
+  if (adv && adv.status !== 'open' && advSeen !== adv.id) {
+    advSeen = adv.id; clearInterval(advTimer); const b = $('#advBody'); if (b) closeModal();
+    toast(adv.status === 'done' ? 'Semua pemain setuju — tahun dimajukan' : adv.status === 'rejected' ? `Voting ditolak ${adv.rejectedBy ? 'oleh ' + adv.rejectedBy : ''}` : adv.status === 'expired' ? 'Voting kedaluwarsa' : adv.status === 'failed' ? 'Voting gagal diproses: ' + adv.error : 'Voting disetujui', adv.status === 'done' ? 'ok' : 'warn');
+    if (adv.status === 'done' && prev && prev.id === adv.id) { setTimeout(async () => { await reload(); if (S.me?.president) showReport(); }, 400); }
+  }
+  updateAdv();
+}
+
 // ================= TUTORIAL =================
-const STEPS = [['globe', 'Negara', 'Dunia berisi ±250 negara dan teritori yang dikelola NPC. Pilih negara lewat peta atau kotak pencarian, lalu lihat dasbornya: populasi, PDB, pertumbuhan, inflasi, pengangguran, utang, dan kas.'], ['crown', 'Peran Pemain', 'Anda dapat <b>mengklaim kepresidenan</b> negara yang belum dipimpin pemain lain, atau mendaftar sebagai <b>warga</b>. Klaim presiden hanya berlaku selama tab ini terbuka — memuat ulang atau menutup tab akan melepasnya. Kewarganegaraan tetap tersimpan.'], ['landmark', 'Pemerintahan', 'Presiden mengatur suku bunga, pajak (butuh persetujuan parlemen NPC), belanja, dagang, kabinet, koalisi, ideologi, dan undang-undang. Pantau kepuasan rakyat, korupsi, investasi, dan stabilitas.'], ['megaphone', 'Warga', 'Warga mengajukan dan mendukung petisi, mengadakan forum, relawan, dan aksi damai (masing-masing sekali per tahun simulasi), menulis di linimasa, serta memberi suara.'], ['vote', 'Pemilu', 'Setiap pergantian tahun dunia ada pemilu. Warga pemain memberi satu suara per tahun; warga NPC memilih berdasarkan kondisi negara. Jika penantang menang, presiden pemain turun jabatan.'], ['fast-forward', 'Pergantian Tahun', 'Tombol <b>Majukan 1 tahun</b> memproses ekonomi, politik, diplomasi, dan pemilu seluruh dunia, lalu menampilkan laporan akhir tahun. Ada jeda penggunaan. Tahun simulasi berbeda dari waktu nyata; populasi diperbarui tiap tengah malam menurut zona waktu negara.'], ['rss', 'Berita & Sinkronisasi', 'Semua pemain berada di dunia yang sama. Data tersinkron secara real-time dan setiap 5 detik. Seluruh berita adalah bagian dari simulasi.']];
+const STEPS = [['globe', 'Negara', 'Dunia berisi ±250 negara dan teritori yang dikelola NPC. Pilih negara lewat peta atau kotak pencarian, lalu lihat dasbornya: populasi, PDB, pertumbuhan, inflasi, pengangguran, utang, dan kas.'], ['crown', 'Peran Pemain', 'Anda dapat <b>mengklaim kepresidenan</b> negara yang belum dipimpin pemain lain, atau mendaftar sebagai <b>warga</b>. Klaim presiden hanya berlaku selama tab ini terbuka — memuat ulang atau menutup tab akan melepasnya. Kewarganegaraan tetap tersimpan.'], ['landmark', 'Pemerintahan', 'Presiden mengatur suku bunga, pajak (butuh persetujuan parlemen NPC), belanja, dagang, kabinet, koalisi, ideologi, dan undang-undang. Pantau kepuasan rakyat, korupsi, investasi, dan stabilitas.'], ['megaphone', 'Warga', 'Warga mengajukan dan mendukung petisi, mengadakan forum, relawan, dan aksi damai (masing-masing sekali per tahun simulasi), menulis di linimasa, serta memberi suara.'], ['vote', 'Pemilu', 'Setiap pergantian tahun dunia ada pemilu. Warga pemain memberi satu suara per tahun; warga NPC memilih berdasarkan kondisi negara. Jika penantang menang, presiden pemain turun jabatan.'], ['fast-forward', 'Pergantian Tahun', 'Tombol <b>Majukan 1 tahun</b> memulai <b>voting</b>: semua pemain online harus setuju (jika Anda sendirian, langsung maju). Setelah itu sistem memproses ekonomi, politik, diplomasi, dan pemilu seluruh dunia, lalu menampilkan laporan akhir tahun. Ada jeda penggunaan. Tahun simulasi berbeda dari waktu nyata; populasi diperbarui tiap tengah malam menurut zona waktu negara.'], ['rss', 'Berita & Sinkronisasi', 'Semua pemain berada di dunia yang sama. Data tersinkron secara real-time dan setiap 5 detik. Seluruh berita adalah bagian dari simulasi.']];
 function tutorial(i) { const s = STEPS[i]; modal({ title: `${i + 1}/${STEPS.length} — ${s[1]}`, icon: s[0], body: `<p>${s[2]}</p><div class="bar"><i style="width:${(i + 1) / STEPS.length * 100}%;background:var(--acc)"></i></div>`, actions: [...(i > 0 ? [{ label: 'Kembali', icon: 'chevron-left', keep: true, fn: () => tutorial(i - 1) }] : []), i < STEPS.length - 1 ? { label: 'Lanjut', icon: 'chevron-right', cls: 'pri', keep: true, fn: () => tutorial(i + 1) } : { label: 'Mulai bermain', icon: 'play', cls: 'pri', fn: () => { try { localStorage.setItem('cm_tut', '1'); } catch (e) {} } }, { label: 'Tutup' }] }); }
 
 // ================= EVENT =================
@@ -241,4 +296,4 @@ async function boot(session) {
 }
 sb.auth.onAuthStateChange((ev, session) => { if (session) S.token = session.access_token; if (ev === 'SIGNED_OUT') { booted = false; showGate(); } if ((ev === 'SIGNED_IN' || ev === 'INITIAL_SESSION') && session && !booted) boot(session); });
 (async () => { const { data } = await sb.auth.getSession(); if (!data.session) showGate(); else boot(data.session); })();
-window.__cm = { S, sync, go, pick, render };
+window.__cm = { S, sync, go, pick, render, get land() { return LAND; } };

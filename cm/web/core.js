@@ -76,7 +76,7 @@ export function animateNumbers(root = document) {
 }
 export function num(id, v, kind = 'n', d = 0) { return `<span data-count="${v}" data-cid="${id}" data-kind="${kind}" data-d="${d}">${kind === 'usd' ? usd(v) : fmt(v, d)}</span>`; }
 
-export function lineChart(canvas, series, { color = '#2dd4bf', label = '' } = {}) {
+export function lineChart(canvas, series, { color = '#e9b8a0', label = '' } = {}) {
   if (!canvas) return; const dpr = Math.min(2, devicePixelRatio || 1), W = canvas.clientWidth, H = canvas.clientHeight; canvas.width = W * dpr; canvas.height = H * dpr;
   const g = canvas.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
   if (!series.length) return;
