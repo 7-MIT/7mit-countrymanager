@@ -1,0 +1,244 @@
+// Country Manager — boot, login, sinkronisasi real-time, peta, aksi
+import { sb, S, SESSION, SB_URL, SB_KEY, $, $$, esc, ic, fmt, usd, cty, toast, modal, closeModal, api, act, refreshIcons, animateNumbers, ago, isPres, myCode, REGION_ID } from './core.js';
+import { PAGES, hooks, showVote, tfPreview, tickClock, mapMetrics } from './pages.js';
+import * as P from './pages.js';
+
+const app = $('#app');
+const st = document.createElement('style'); st.textContent = '.osm-dark .leaflet-tile-pane{filter:invert(1) hue-rotate(185deg) brightness(.82) contrast(.92) saturate(.6)}'; document.head.appendChild(st);
+
+// ================= LOGIN =================
+function showGate(msg) {
+  document.title = 'Masuk — Country Manager';
+  app.innerHTML = `<div class="gate"><div class="card box"><div class="logo">${ic('globe-2')}</div><h1>Country Manager</h1>
+  <p>Dunia bersama untuk semua pemain: jadi presiden atau warga, kelola ekonomi, dagang, politik, dan diplomasi. Anda harus masuk lebih dulu untuk bermain.</p>
+  <button class="btn pri big" id="gLogin">${ic('log-in')} Masuk dengan Google</button>
+  ${msg ? `<div class="banner" style="margin-top:16px">${ic('triangle-alert')}<div>${esc(msg)}</div></div>` : ''}
+  <div class="sub" style="margin-top:18px">Login dikelola oleh server.7mit (Supabase Auth). Seluruh angka dan peristiwa adalah data permainan.</div></div></div>`;
+  refreshIcons();
+  $('#gLogin').onclick = async (e) => { const b = e.currentTarget; b.disabled = true; b.innerHTML = `${ic('loader-circle', 'spin')} Mengalihkan ke Google…`; refreshIcons();
+    const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
+    if (error) { showGate('Gagal masuk: ' + error.message); } };
+}
+
+// ================= SHELL =================
+const NAV_GROUPS = [['dash', 'map', 'leader', 'news'], ['policy', 'trade', 'treasury', 'politics', 'gov', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
+function shell() {
+  app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo">${ic('globe-2')}</div>Country Manager</div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
+   <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
+   <div class="main"><div class="top"><button class="iconbtn menuBtn" data-act="menu" aria-label="Menu">${ic('menu')}</button>
+    <div class="search">${ic('search')}<input id="gSearch" type="search" placeholder="Cari negara atau teritori…" autocomplete="off"><div class="sres hidden" id="sRes"></div></div>
+    <span class="chip" id="roleChip"></span><div class="grow"></div>
+    <span class="chip" id="yearChip" title="Tahun simulasi ekonomi (bukan waktu nyata)">${ic('calendar')} Tahun sim. <b id="yr"></b></span>
+    <span class="chip" id="realChip" title="Waktu nyata negara terpilih">${ic('clock')} <b id="realClock"></b></span>
+    <button class="btn pri" id="advBtn" data-act="advanceAsk">${ic('fast-forward')} Majukan 1 tahun</button>
+    <span class="chip" id="visChip" title="Pengunjung aktif">${ic('users-round')} <b id="vis">0</b></span>
+    <span class="chip" id="connChip">${ic('wifi')} <span>…</span></span>
+    <div style="position:relative"><button class="iconbtn" id="bell" data-act="bell" aria-label="Notifikasi">${ic('bell')}<span class="badge hidden" id="bellN">0</span></button><div class="notif hidden" id="notifBox"></div></div>
+    <button class="iconbtn" data-act="help" aria-label="Bantuan">${ic('circle-help')}</button></div>
+   <div id="pg"></div></div></div>`;
+  refreshIcons();
+}
+function updateChrome() {
+  if (!$('#yr')) return; const me = S.me, c = cty(myCode());
+  $('#yr').textContent = S.world.year;
+  const role = me.president ? `${ic('crown')} Presiden <b>${esc(cty(me.president)?.name || me.president)}</b>` : me.citizenship ? `${ic('id-card')} Warga <b>${esc(cty(me.citizenship)?.name || me.citizenship)}</b>` : `${ic('eye')} Pengunjung — pilih negara & klaim atau jadi warga`;
+  const rc = $('#roleChip'); if (rc.dataset.k !== role) { rc.dataset.k = role; rc.innerHTML = role; }
+  $('#vis').textContent = S.visitors; $$('[data-nav]').forEach(b => b.classList.toggle('on', b.dataset.nav === S.page));
+  $$('[data-pend]').forEach(d => { d.textContent = S.pending; d.classList.toggle('hidden', !S.pending); });
+  const n = S.notifs.filter(x => !x.read).length; const bn = $('#bellN'); bn.textContent = n; bn.classList.toggle('hidden', !n);
+  updateConn(); updateAdv(); tickTop();
+  const canAdv = isPres() || S.me.admin; $('#advBtn').classList.toggle('hidden', !canAdv);
+}
+function updateConn() { const ok = S.online && Date.now() - S.lastSync < 14000, el = $('#connChip'); if (!el) return; el.className = 'chip ' + (ok ? 'ok' : 'off'); const t = ok ? (S.rt ? 'Real-time' : 'Terhubung (5 dtk)') : 'Terputus'; if (el.dataset.k !== t) { el.dataset.k = t; el.innerHTML = `${ic(ok ? 'wifi' : 'wifi-off')} <span>${t}</span>`; refreshIcons(); } }
+function updateAdv() { const b = $('#advBtn'); if (!b) return; const left = S.world.lastAdvance ? Math.ceil(((S.world.cooldownMs || 45000) - (Date.now() - new Date(S.world.lastAdvance).getTime())) / 1000) : 0; b.disabled = S.world.paused || left > 0 || S.world.advancing; b.title = S.world.paused ? 'Waktu dihentikan admin UN' : left > 0 ? `Jeda penggunaan ${left} detik` : 'Proses ekonomi, politik, diplomasi, dan pemilu'; const t = S.world.advancing ? 'Memproses…' : S.world.paused ? 'Waktu dihentikan' : left > 0 ? `Jeda ${left} dtk` : 'Majukan 1 tahun'; if (b.dataset.k !== t) { b.dataset.k = t; b.innerHTML = `${ic(S.world.paused ? 'pause' : left > 0 ? 'hourglass' : 'fast-forward')} ${t}`; refreshIcons(); } }
+function tickTop() { const c = cty(S.sel); const el = $('#realClock'); if (el && c) el.textContent = new Date(Date.now() + c.tz * 3600e3).toISOString().slice(11, 19) + ` (UTC${c.tz >= 0 ? '+' : ''}${c.tz})`; }
+
+// ================= RENDER =================
+export function render() {
+  if (!$('#pg')) return; const Pg = PAGES[S.page] || PAGES.dash, y = window.scrollY;
+  let html; try { html = Pg.r(); } catch (e) { console.error(e); html = `<div class="empty">${ic('circle-alert')}<div>Gagal menampilkan halaman: ${esc(e.message)}</div></div>`; }
+  const ann = S.world.announcement ? `<div class="banner">${ic('megaphone')}<div><b>Pengumuman UN:</b> ${esc(S.world.announcement)}</div></div>` : '';
+  $('#pg').innerHTML = `<div class="page">${S.page !== 'map' && S.page !== 'dash' ? `<div class="row wrap between"><h1 style="font-size:22px;display:flex;gap:10px;align-items:center">${ic(Pg.i)} ${Pg.t}</h1>${cty(S.sel) ? `<span class="tag a">${cty(S.sel).flag} ${esc(cty(S.sel).name)}</span>` : ''}</div>` : ''}${ann}${html}</div>`;
+  refreshIcons(); animateNumbers($('#pg')); try { Pg.after?.(); } catch (e) { console.error(e); } tickClock(); window.scrollTo(0, y); document.title = `${Pg.t} — Country Manager`; updateChrome();
+}
+hooks.render = render;
+export function go(p) { if (S.page === 'map' && p !== 'map') destroyMap(); S.page = p; S.dirty = false; $('#side')?.classList.remove('open'); if (p === 'news') loadNews(); if (p === 'map') loadElections(); render(); window.scrollTo(0, 0); }
+hooks.go = go;
+function softRender() { if (S.dirty || !$('#pg')) return; const a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && $('#pg').contains(a)) return; if (S.page === 'map') { updateMapStyle(); return; } render(); }
+
+// ================= DATA =================
+let lastDetail = '', lastMine = '';
+async function loadSel(force) { if (!S.sel) return; try { const d = await api('get_country', { code: S.sel }, { quiet: true }); const j = JSON.stringify(d); if (j !== lastDetail || force) { lastDetail = j; S.D = d; softRender(); } } catch (e) { if (!S.D) S.D = null; } }
+async function loadMine(force) { if (!S.me?.president) { S.M = null; lastMine = ''; return; } try { const d = await api('get_country', { code: S.me.president }, { quiet: true }); const j = JSON.stringify(d); if (j !== lastMine || force) { lastMine = j; S.M = d; softRender(); } } catch (e) {} }
+async function loadElections() { try { const r = await api('elections', {}, { quiet: true }); const latest = new Map(); r.elections.forEach(e => { const o = latest.get(e.country); if (!o || e.year > o.year) latest.set(e.country, e); }); S.elections = [...latest.values()]; if (S.page === 'map') { updateMapStyle(); } } catch (e) {} }
+async function loadNews(more) { const scope = S.filters.newsScope || 'all'; try { const r = await api('news', { country: scope === 'sel' ? S.sel : undefined, before: more && S.newsList?.length ? S.newsList[S.newsList.length - 1].id : undefined, limit: 40 }, { quiet: true }); S.newsList = more ? [...(S.newsList || []), ...r.news] : r.news; if (S.page === 'news') render(); } catch (e) { S.newsList = S.newsList || []; if (S.page === 'news') render(); } }
+export async function reload() { await Promise.all([sync(true), loadSel(true), loadMine(true)]); }
+hooks.reload = reload; hooks.loadSel = loadSel; hooks.loadMine = loadMine;
+
+function pushNotif(n) { if (S.notifs.some(x => x.id === n.id)) return; S.notifs.unshift({ ...n, read: false, ts: n.ts || new Date().toISOString() }); S.notifs = S.notifs.slice(0, 60); if ('Notification' in window && Notification.permission === 'granted' && document.hidden) { try { new Notification(n.title, { body: n.body || '' }); } catch (e) {} } }
+let syncing = false, syncTimer = null;
+export async function sync(force) {
+  if (syncing && !force) return; syncing = true;
+  try {
+    const d = await api('sync', { since: S.since || undefined, newsSince: S.newsSince || 0 }, { quiet: true });
+    S.online = true; S.lastSync = Date.now();
+    const firstTime = !S.since;
+    if (d.full) S.countries.clear(); d.countries.forEach(c => S.countries.set(c.code, c)); if (d.since) S.since = d.since;
+    const prevPres = S.me?.president, prevAnn = S.world.announcement;
+    S.me = d.me; S.world = d.world; S.visitors = d.visitors;
+    if (d.pending > S.pending && !firstTime) pushNotif({ id: 'pend' + Date.now(), icon: 'inbox', title: 'Penawaran masuk', body: `${d.pending} penawaran menunggu jawaban Anda` });
+    S.pending = d.pending;
+    if (d.world.announcement && d.world.announcement !== S.lastAnn) { if (S.lastAnn !== '' || !firstTime) pushNotif({ id: 'ann' + d.world.announcement, icon: 'megaphone', title: 'Pengumuman UN', body: d.world.announcement }); S.lastAnn = d.world.announcement; }
+    if (prevPres && !d.me.president && !firstTime) { pushNotif({ id: 'lost' + Date.now(), icon: 'user-x', title: 'Kepresidenan berakhir', body: 'Anda tidak lagi menjabat (kalah pemilu, dilepas admin, atau sesi berakhir).' }); toast('Kepresidenan Anda berakhir', 'warn'); S.M = null; }
+    for (const n of [...d.news].reverse()) { if (firstTime) break; const mine = myCode(); if (n.country === mine || n.kind === 'pengumuman' || (n.kind === 'dunia' && !n.country)) pushNotif({ id: 'n' + n.id, icon: 'newspaper', title: n.title, body: n.source, ts: n.ts }); }
+    if (d.lastNews) S.newsSince = d.lastNews;
+    if (!S.sel) S.sel = myCode() || (S.countries.has('ID') ? 'ID' : [...S.countries.keys()][0]);
+    if (firstTime) { await Promise.all([loadSel(true), loadMine(true)]); }
+    else if (prevPres !== d.me.president) { await loadMine(true); }
+    updateChrome(); softRender();
+  } catch (e) { S.online = false; updateConn(); } finally { syncing = false; }
+}
+function queueSync() { clearTimeout(syncTimer); syncTimer = setTimeout(async () => { await sync(true); loadSel(); loadMine(); if (S.page === 'news') loadNews(); }, 450); }
+
+async function subscribeRealtime() {
+  try { await sb.realtime.setAuth(); if (S.ch) await sb.removeChannel(S.ch); S.ch = sb.channel('cm-world', { config: { private: true, broadcast: { self: false } } }).on('broadcast', { event: 'change' }, queueSync).subscribe((s) => { S.rt = s === 'SUBSCRIBED'; updateConn(); }); } catch (e) { S.rt = false; }
+}
+
+// ================= PETA =================
+let LMAP = null, markers = new Map(), routes = [], ships = [], raf = 0;
+function ramp(t) { const st = [[19, 78, 74], [45, 212, 191], [253, 224, 71], [251, 113, 133]], x = Math.max(0, Math.min(0.999, t)) * 3, i = Math.floor(x), f = x - i; const a = st[i], b = st[i + 1]; return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(',')})`; }
+function metricVal(c) { if (S.metric === 'gdp') return Math.log10(c.gdp + 1); if (S.metric === 'growth') return c.growth; if (S.metric === 'infl') return Math.min(c.infl, 40); const e = S.elections.find(x => x.country === c.code); return e ? e.result.share : NaN; }
+function destroyMap() { cancelAnimationFrame(raf); if (LMAP) { LMAP.remove(); LMAP = null; } markers.clear(); routes = []; ships = []; }
+function initMap() {
+  destroyMap(); const el = $('#map'); if (!el || !window.L) { if (el) el.innerHTML = `<div class="empty">${ic('map-off')}<div>Pustaka peta gagal dimuat.</div></div>`; return; }
+  LMAP = L.map(el, { worldCopyJump: true, minZoom: 2, maxZoom: 9, zoomControl: true, attributionControl: true }).setView([20, 10], 2);
+  if (S.world.mapbox) L.tileLayer(`https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${S.world.mapbox}`, { tileSize: 512, zoomOffset: -1, attribution: '© Mapbox © OpenStreetMap' }).addTo(LMAP);
+  else { el.classList.add('osm-dark'); L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 19 }).addTo(LMAP); }
+  for (const c of S.countries.values()) { const m = L.circleMarker([c.lat, c.lng], { radius: 3 + Math.log10(c.gdp + 1) * 3.2, weight: 1, color: '#0b1218', fillOpacity: .85 }).addTo(LMAP); m.bindTooltip(`${c.flag} ${c.name}`); m.on('click', () => pick(c.code, true)); markers.set(c.code, m); }
+  updateMapStyle(); drawRoutes(); if (cty(S.sel)) LMAP.setView([cty(S.sel).lat, cty(S.sel).lng], 3);
+  setTimeout(() => LMAP && LMAP.invalidateSize(), 200); loopShips();
+}
+hooks.initMap = initMap;
+function updateMapStyle() {
+  if (!LMAP) return; const vals = [...S.countries.values()].map(metricVal).filter(Number.isFinite).sort((a, b) => a - b);
+  for (const [code, m] of markers) { const c = cty(code); if (!c) continue; const v = metricVal(c); const t = Number.isFinite(v) && vals.length ? vals.indexOf(v) / Math.max(1, vals.length - 1) : null; m.setStyle({ fillColor: t == null ? '#334155' : ramp(t), weight: code === S.sel ? 3 : 1, color: code === S.sel ? '#fff' : '#0b1218' }); if (code === S.sel) m.bringToFront(); }
+  drawRoutes();
+}
+function drawRoutes() {
+  if (!LMAP) return; routes.forEach(r => LMAP.removeLayer(r)); ships.forEach(s => LMAP.removeLayer(s.m)); routes = []; ships = [];
+  const src = cty(S.sel); const tr = (S.D?.trades || []).filter(o => o.kind === 'trade' && o.status === 'active'); if (!src) return;
+  for (const o of tr) { const a = cty(o.from_c), b = cty(o.to_c); if (!a || !b) continue; const mid = [(a.lat + b.lat) / 2 + Math.abs(a.lng - b.lng) * 0.08, (a.lng + b.lng) / 2]; const pts = []; for (let t = 0; t <= 1; t += 0.05) pts.push(bez([a.lat, a.lng], mid, [b.lat, b.lng], t)); routes.push(L.polyline(pts, { color: '#fbbf24', weight: 1.5, opacity: .6, dashArray: '4 6' }).addTo(LMAP)); const m = L.marker(pts[0], { icon: L.divIcon({ className: '', html: '<div class="ship"></div>', iconSize: [10, 10] }), interactive: false }).addTo(LMAP); ships.push({ m, pts, t: Math.random(), sp: 0.04 + Math.random() * 0.03 }); }
+}
+const bez = (a, m, b, t) => [(1 - t) * (1 - t) * a[0] + 2 * (1 - t) * t * m[0] + t * t * b[0], (1 - t) * (1 - t) * a[1] + 2 * (1 - t) * t * m[1] + t * t * b[1]];
+let lastT = 0;
+function loopShips(t = 0) { raf = requestAnimationFrame(loopShips); if (!LMAP) return; const dt = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t; for (const s of ships) { s.t = (s.t + dt * s.sp) % 1; const i = Math.floor(s.t * (s.pts.length - 1)), f = s.t * (s.pts.length - 1) - i, a = s.pts[i], b = s.pts[Math.min(i + 1, s.pts.length - 1)]; s.m.setLatLng([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]); } }
+
+export function pick(code, fromMap) {
+  if (!S.countries.has(code)) return; S.sel = code; S.D = null; lastDetail = ''; S.dirty = false;
+  if (S.page === 'leader' || S.page === 'dash' && !fromMap) { if (S.page === 'leader') S.page = 'dash'; }
+  loadSel(true).then(() => { if (S.page === 'map') { drawRoutes(); } }); if (S.page === 'news') loadNews();
+  if (S.page === 'map' && LMAP) { const c = cty(code); LMAP.flyTo([c.lat, c.lng], Math.max(LMAP.getZoom(), 4), { duration: .8 }); updateMapStyle(); }
+  render(); if (S.page === 'map' && LMAP) { /* peta dipertahankan */ }
+}
+
+// ================= ACTIONS =================
+const val = (id) => $('#' + id)?.value;
+const A = {
+  menu: () => $('#side').classList.toggle('open'),
+  logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
+  help: () => tutorial(0),
+  pick: (el) => { const keep = S.page; pick(el.dataset.code); if (keep === 'leader' || keep === 'dash') go('dash'); },
+  goDash: () => go('dash'),
+  claimSel: (el) => act(el, 'claim', { code: S.sel }, () => `Anda kini Presiden ${cty(S.sel)?.name}`, async () => { await sync(true); await Promise.all([loadMine(true), loadSel(true)]); updateChrome(); render(); }),
+  release: (el) => act(el, 'release', {}, 'Jabatan dilepas. NPC kembali memimpin.', async () => { S.M = null; await sync(true); await loadSel(true); render(); }),
+  citizenSel: (el) => act(el, 'become_citizen', { code: S.sel }, `Anda kini warga ${cty(S.sel)?.name}`, async () => { await sync(true); await loadSel(true); render(); }),
+  leaveCit: (el) => act(el, 'leave_citizenship', {}, 'Kewarganegaraan dilepas', async () => { await sync(true); render(); }),
+  bell: () => { const b = $('#notifBox'); b.classList.toggle('hidden'); if (!b.classList.contains('hidden')) { renderNotifs(); S.notifs.forEach(n => n.read = true); updateChrome(); } },
+  advanceAsk: () => modal({ title: 'Majukan 1 tahun?', icon: 'fast-forward', body: `<p>Tahun dunia akan maju dari <b>${S.world.year}</b> ke <b>${S.world.year + 1}</b>. Ekonomi, politik, diplomasi, pemilu, dan keputusan NPC diproses untuk <b>seluruh negara</b>. Setelah ini ada jeda penggunaan sebelum tahun dapat dimajukan lagi.</p>`, actions: [{ label: 'Majukan', cls: 'pri', icon: 'check', fn: () => A.advance() }, { label: 'Batal' }] }),
+  advance: async () => { const b = $('#advBtn'); S.world.advancing = true; updateAdv(); const r = await act(b, 'advance_year', {}, (x) => `Tahun ${x.year} dimulai`, async () => { await reload(); }); S.world.advancing = false; if (r) { showReport(); } updateChrome(); },
+  applyPolicy: (el) => { const patch = {}, c = P_M(); $$('[data-pol]').forEach(i => { const k = i.dataset.pol; if (+i.value !== c.pol[k]) patch[k] = +i.value; }); if (!Object.keys(patch).length) return toast('Tidak ada perubahan', 'warn'); act(el, 'set_policy', { policy: patch }, null, async (r) => { await loadMine(true); S.dirty = false; render(); if (r.vote) showVote(r.vote.passed ? 'Parlemen menyetujui' : 'Parlemen menolak', r.vote, r.note); else toast('Kebijakan diterapkan'); }); },
+  resetPolicy: () => { S.dirty = false; render(); },
+  proposeTrade: (el) => act(el, 'propose_trade', (() => { const c = P_M(), v = parseFloat(val('trVal')), usdB = val('trCur') === 'USD' ? v : v / c.fx; return { to: val('trTo'), sector: val('trSec'), value: usdB, tariffTo: +val('trT1'), tariffFrom: +val('trT2') }; })(), (r) => r.note || 'Penawaran dikirim', async () => { await loadMine(true); S.dirty = false; render(); }),
+  respond: (el) => act(el, 'respond_offer', { id: +el.dataset.id, accept: el.dataset.accept === '1' }, el.dataset.accept === '1' ? 'Penawaran diterima' : 'Penawaran ditolak', async () => { await loadMine(true); await sync(true); render(); }),
+  cancelTrade: (el) => modal({ title: 'Batalkan perdagangan?', icon: 'ban', body: '<p>Hubungan dengan negara mitra akan memburuk.</p>', actions: [{ label: 'Batalkan perjanjian', cls: 'red', fn: () => act(null, 'cancel_trade', { id: +el.dataset.id }, 'Perjanjian dibatalkan', async () => { await loadMine(true); render(); }) }, { label: 'Kembali' }] }),
+  transfer: (el) => { const c = P_M(), a = parseFloat(val('tfAmt')); act(el, 'transfer', { to: val('tfTo'), amount: a, currency: val('tfCur'), note: val('tfNote') }, 'Transfer berhasil', async () => { await Promise.all([loadMine(true), sync(true)]); S.dirty = false; render(); }); },
+  setParty: (el) => act(el, 'set_party', { party: val('partySel'), coalition: $$('[data-coal]:checked').map(i => i.dataset.coal) }, (r) => `Koalisi disimpan (${r.seats} kursi)`, async () => { await loadMine(true); S.dirty = false; render(); }),
+  appoint: (el) => act(el, 'appoint', { ministry: el.dataset.m, index: +val('cab_' + el.dataset.m) }, 'Menteri ditunjuk', async () => { await loadMine(true); S.dirty = false; render(); }),
+  motion: (el) => act(el, 'motion', { motion: el.dataset.m }, null, async (r) => { S.filters.lastVote = r.vote; await loadMine(true); S.dirty = false; render(); showVote(r.vote.passed ? 'Mosi disetujui' : 'Mosi ditolak', r.vote); }),
+  ideology: (el) => act(el, 'set_ideology', { ideology: el.dataset.id }, 'Ideologi diganti', async () => { await loadMine(true); render(); }),
+  investigate: (el) => act(el, 'investigate', {}, (r) => `Penyelidikan selesai: korupsi turun ${r.found} poin`, async () => { await loadMine(true); render(); }),
+  propose: (el) => act(el, 'propose_law', { law: el.dataset.id }, null, async (r) => { await loadMine(true); render(); showVote(r.vote.passed ? 'RUU disahkan' : 'RUU ditolak', r.vote); }),
+  repeal: (el) => act(el, 'repeal_law', { law: el.dataset.id }, null, async (r) => { await loadMine(true); render(); showVote(r.vote.passed ? 'UU dicabut' : 'Pencabutan ditolak', r.vote); }),
+  applySoc: (el) => { const patch = {}; $$('[data-soc]').forEach(i => patch[i.dataset.soc] = +i.value); act(el, 'set_policy', { policy: patch }, 'Pengaturan kependudukan diterapkan', async () => { await loadMine(true); S.dirty = false; render(); }); },
+  alliance: (el) => act(el, 'alliance', { alliance: el.dataset.id, join: el.dataset.join === '1' }, el.dataset.join === '1' ? 'Bergabung dengan aliansi' : 'Keluar dari aliansi', async () => { await loadMine(true); await sync(true); render(); }),
+  setDefense: (el) => act(el, 'set_defense', { defense: +val('defRange') }, 'Anggaran pertahanan diterapkan', async () => { await loadMine(true); S.dirty = false; render(); }),
+  bilateral: (el) => act(el, 'bilateral', { target: val('dpTo'), type: val('dpType') }, (r) => r.status === 'accepted' ? 'Kerja sama disepakati' : r.status === 'pending' ? 'Usulan dikirim' : 'Usulan ditolak', async () => { await loadMine(true); render(); }),
+  war: (el) => modal({ title: 'Nyatakan perang?', icon: 'swords', body: `<p>Perang memotong PDB, kas, kesiapan, dan kepuasan rakyat, serta membatalkan perdagangan dengan ${esc(cty(val('dpTo'))?.name || '')}.</p>`, actions: [{ label: 'Nyatakan perang', cls: 'red', fn: () => act(null, 'declare_war', { target: val('dpTo') }, 'Perang dinyatakan', async () => { await loadMine(true); render(); }) }, { label: 'Batal' }] }),
+  peace: (el) => act(el, 'propose_peace', { target: val('dpTo') }, (r) => r.note || 'Selesai', async () => { await loadMine(true); render(); }),
+  civic: (el) => act(el, 'civic', { kind: el.dataset.k, country: S.sel }, 'Aksi warga dicatat', async () => { await loadSel(true); render(); }),
+  petition: (el) => act(el, 'petition_create', { country: S.sel, title: val('ptTitle'), body: val('ptBody') }, 'Petisi diajukan', async () => { S.dirty = false; await loadSel(true); render(); }),
+  support: (el) => act(el, 'petition_support', { id: +el.dataset.id }, 'Dukungan dicatat', async () => { await loadSel(true); render(); }),
+  answerPet: (el) => modal({ title: 'Jawab petisi', icon: 'reply', body: '<div class="field"><label>Jawaban (maks 300 karakter)</label><textarea id="ansT" maxlength="300"></textarea></div>', actions: [{ label: 'Kirim jawaban', cls: 'pri', keep: true, fn: async (b) => { const r = await act(b, 'petition_answer', { id: +el.dataset.id, answer: val('ansT') }, 'Jawaban dikirim', async () => { closeModal(); await loadSel(true); render(); }); } }, { label: 'Batal' }] }),
+  post: (el) => act(el, 'post_create', { country: S.sel, body: val('poBody'), type: S.me.president === S.sel ? 'pesan' : val('poType') }, 'Pesan dipublikasikan', async () => { S.dirty = false; await loadSel(true); render(); }),
+  like: async (el) => { try { const r = await api('post_like', { id: +el.dataset.id }); el.classList.toggle('on', r.liked); el.innerHTML = `${ic('heart')} ${r.likes}`; refreshIcons(); } catch (e) {} },
+  vote: (el) => act(el, 'vote', { country: S.sel, choice: el.dataset.v }, 'Suara Anda tercatat', async () => { await loadSel(true); render(); }),
+  newsScope: (el) => { S.filters.newsScope = el.dataset.v; S.newsList = null; render(); loadNews(); },
+  moreNews: () => loadNews(true),
+  // admin
+  adIndicator: (el) => act(el, 'admin_set_indicator', { code: val('adC'), field: val('adF'), value: parseFloat(val('adV')) }, 'Indikator diubah', () => reload()),
+  adCurrency: (el) => act(el, 'admin_currency', { code: val('cuC'), cur: val('cuCode'), sym: val('cuSym'), fx: parseFloat(val('cuFx')) }, 'Mata uang diubah', () => reload()),
+  adAlliance: (el) => act(el, 'admin_alliance', { code: val('alC'), alliance: val('alA'), member: el.dataset.v === '1' }, 'Keanggotaan diubah', () => reload()),
+  adAid: (el) => act(el, 'admin_aid', { to: val('aiC'), amount: parseFloat(val('aiA')), currency: 'USD', note: val('aiN') }, 'Bantuan UN terkirim', () => reload()),
+  adLock: (el) => act(el, 'admin_lock', { code: val('lkC'), locked: el.dataset.v === '1' }, 'Status klaim diubah', () => reload()),
+  adRelease: (el) => act(el, 'admin_release', { code: val('lkC') }, 'Presiden pemain dilepas', () => reload()),
+  adYear: (el) => act(el, 'admin_set_year', { year: +val('yrV') }, 'Tahun diatur', () => reload()),
+  adPause: (el) => act(el, 'admin_pause', { paused: el.dataset.v === '1' }, 'Status waktu diubah', async () => { await reload(); render(); }),
+  adReset: () => modal({ title: 'Reset dunia ke 1980?', icon: 'triangle-alert', body: '<p>Seluruh negara, perjanjian, berita, pemilu, petisi, dan unggahan dihapus. Tindakan ini tidak dapat dibatalkan. Ketik <b>RESET</b>:</p><input type="text" id="rsT">', actions: [{ label: 'Reset dunia', cls: 'red', keep: true, fn: async (b) => { await act(b, 'admin_reset', { confirm: val('rsT') }, 'Dunia direset ke 1980', async () => { closeModal(); S.since = null; await reload(); render(); }); } }, { label: 'Batal' }] }),
+  adMapbox: (el) => act(el, 'admin_mapbox', { token: val('mbT') }, 'Token Mapbox disimpan', () => reload()),
+  adAnnounce: (el) => act(el, 'admin_announce', { text: val('anT') }, 'Pengumuman diterbitkan', async () => { await reload(); render(); }),
+  adModerate: (el) => act(el, 'admin_moderate', { type: el.dataset.t, id: +el.dataset.id, hidden: el.dataset.h === '1' }, 'Moderasi diterapkan', async () => { PAGES.admin.after(); }),
+};
+const P_M = () => S.M.country;
+function showReport() { const r = S.M?.country?.report || S.D?.country?.report; if (!r) return; modal({ title: `Laporan Akhir Tahun ${r.year}`, icon: 'newspaper', wide: true, body: `<div class="stack">${r.lines.map(l => `<div class="item">${esc(l)}</div>`).join('')}</div><div class="sub" style="margin-top:10px">Seluruh isi laporan adalah bagian dari simulasi.</div>`, actions: [{ label: 'Lihat Laporan Lengkap', icon: 'newspaper', fn: () => go('report') }, { label: 'Tutup', cls: 'pri' }] }); }
+function renderNotifs() { const b = $('#notifBox'); b.innerHTML = `<div class="row between" style="margin-bottom:8px"><b>Notifikasi</b>${'Notification' in window && Notification.permission !== 'granted' ? `<button class="btn sm" id="notifPerm">${ic('bell-ring')} Izinkan notifikasi browser</button>` : `<span class="tag g">${ic('bell-ring')} Notifikasi browser aktif</span>`}</div>${S.notifs.length ? `<div class="stack">${S.notifs.map(n => `<div class="item"><b>${ic(n.icon || 'bell')} ${esc(n.title)}</b><div class="sub">${esc(n.body || '')} · ${ago(n.ts)}</div></div>`).join('')}</div>` : `<div class="empty">${ic('bell-off')}<div>Belum ada notifikasi.</div></div>`}`; refreshIcons(); const p = $('#notifPerm'); if (p) p.onclick = async () => { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Notifikasi browser diaktifkan' : 'Izin notifikasi tidak diberikan', r === 'granted' ? 'ok' : 'warn'); renderNotifs(); }; }
+
+// ================= TUTORIAL =================
+const STEPS = [['globe', 'Negara', 'Dunia berisi ±250 negara dan teritori yang dikelola NPC. Pilih negara lewat peta atau kotak pencarian, lalu lihat dasbornya: populasi, PDB, pertumbuhan, inflasi, pengangguran, utang, dan kas.'], ['crown', 'Peran Pemain', 'Anda dapat <b>mengklaim kepresidenan</b> negara yang belum dipimpin pemain lain, atau mendaftar sebagai <b>warga</b>. Klaim presiden hanya berlaku selama tab ini terbuka — memuat ulang atau menutup tab akan melepasnya. Kewarganegaraan tetap tersimpan.'], ['landmark', 'Pemerintahan', 'Presiden mengatur suku bunga, pajak (butuh persetujuan parlemen NPC), belanja, dagang, kabinet, koalisi, ideologi, dan undang-undang. Pantau kepuasan rakyat, korupsi, investasi, dan stabilitas.'], ['megaphone', 'Warga', 'Warga mengajukan dan mendukung petisi, mengadakan forum, relawan, dan aksi damai (masing-masing sekali per tahun simulasi), menulis di linimasa, serta memberi suara.'], ['vote', 'Pemilu', 'Setiap pergantian tahun dunia ada pemilu. Warga pemain memberi satu suara per tahun; warga NPC memilih berdasarkan kondisi negara. Jika penantang menang, presiden pemain turun jabatan.'], ['fast-forward', 'Pergantian Tahun', 'Tombol <b>Majukan 1 tahun</b> memproses ekonomi, politik, diplomasi, dan pemilu seluruh dunia, lalu menampilkan laporan akhir tahun. Ada jeda penggunaan. Tahun simulasi berbeda dari waktu nyata; populasi diperbarui tiap tengah malam menurut zona waktu negara.'], ['rss', 'Berita & Sinkronisasi', 'Semua pemain berada di dunia yang sama. Data tersinkron secara real-time dan setiap 5 detik. Seluruh berita adalah bagian dari simulasi.']];
+function tutorial(i) { const s = STEPS[i]; modal({ title: `${i + 1}/${STEPS.length} — ${s[1]}`, icon: s[0], body: `<p>${s[2]}</p><div class="bar"><i style="width:${(i + 1) / STEPS.length * 100}%;background:var(--acc)"></i></div>`, actions: [...(i > 0 ? [{ label: 'Kembali', icon: 'chevron-left', keep: true, fn: () => tutorial(i - 1) }] : []), i < STEPS.length - 1 ? { label: 'Lanjut', icon: 'chevron-right', cls: 'pri', keep: true, fn: () => tutorial(i + 1) } : { label: 'Mulai bermain', icon: 'play', cls: 'pri', fn: () => { try { localStorage.setItem('cm_tut', '1'); } catch (e) {} } }, { label: 'Tutup' }] }); }
+
+// ================= EVENT =================
+document.addEventListener('click', (e) => {
+  const nv = e.target.closest('[data-nav]'); if (nv) { go(nv.dataset.nav); return; }
+  const el = e.target.closest('[data-act]'); if (el && A[el.dataset.act]) { e.preventDefault(); if (el.disabled) return; A[el.dataset.act](el, e); return; }
+  if (!e.target.closest('#notifBox') && !e.target.closest('#bell')) $('#notifBox')?.classList.add('hidden');
+  if (!e.target.closest('.search')) $('#sRes')?.classList.add('hidden');
+});
+document.addEventListener('input', (e) => {
+  const t = e.target, d = t.dataset || {}; if (!$('#pg')?.contains(t)) { if (t.id === 'gSearch') searchCountries(t.value); return; }
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && t.id !== 'lbQ') S.dirty = true;
+  if ('pol' in d || 'polN' in d) { const k = d.pol || d.polN; $$(`[data-pol="${k}"]`).forEach(i => i.value = t.value); $$(`[data-pol-n="${k}"]`).forEach(i => i.value = t.value); }
+  if ('soc' in d) $('#soc_' + d.soc + '_v').textContent = t.value;
+  if (t.id === 'defRange') $('#defV').textContent = t.value + '% PDB';
+  if (d.input === 'metric') { S.metric = t.value; updateMapStyle(); S.dirty = false; }
+  if (d.input === 'trade') P.convPreview(); if (d.input === 'tf') tfPreview();
+  if (d.input === 'poCnt') $('#poCnt').textContent = t.value.length + '/500';
+  if (d.input === 'lb') { S.filters.lbQ = val('lbQ'); S.filters.lbReg = val('lbReg'); S.filters.lbSort = val('lbSort'); S.dirty = false; const pos = t.selectionStart; render(); const q = $('#lbQ'); if (t.id === 'lbQ' && q) { q.focus(); q.setSelectionRange(pos, pos); } }
+  if (t.id === 'trTo') S.filters.tradeTo = t.value; if (t.id === 'tfTo') S.filters.trTo = t.value;
+});
+function searchCountries(q) { const box = $('#sRes'); q = q.trim().toLowerCase(); if (!q) { box.classList.add('hidden'); return; } const r = [...S.countries.values()].filter(c => c.name.toLowerCase().includes(q) || c.code.toLowerCase() === q || (REGION_ID[c.region] || '').toLowerCase().includes(q)).slice(0, 9); box.innerHTML = r.length ? r.map(c => `<button data-sc="${c.code}"><span style="font-size:20px">${c.flag}</span><span class="grow">${esc(c.name)}</span><span class="sub">${usd(c.gdp)}</span></button>`).join('') : `<div class="sub" style="padding:12px">Tidak ditemukan.</div>`; box.classList.remove('hidden'); $$('[data-sc]', box).forEach(b => b.onclick = () => { box.classList.add('hidden'); $('#gSearch').value = ''; pick(b.dataset.sc, S.page === 'map'); if (!['map', 'dash'].includes(S.page) && !PAGES[S.page].live) render(); else if (S.page !== 'map') go('dash'); }); }
+function releaseBeacon() { if (!S.me?.president || !S.token) return; try { fetch(`${SB_URL}/functions/v1/cm-api`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${S.token}`, apikey: SB_KEY }, body: JSON.stringify({ action: 'release', session: SESSION }) }); } catch (e) {} }
+addEventListener('pagehide', releaseBeacon);
+
+// ================= BOOT =================
+let booted = false;
+async function boot(session) {
+  if (booted) return; booted = true; S.token = session.access_token; S.user = session.user;
+  app.innerHTML = `<div class="gate"><div class="box"><div class="skeleton" style="height:120px"></div><p class="sub" style="margin-top:14px">${ic('loader-circle', 'spin')} Memuat dunia…</p></div></div>`; refreshIcons();
+  try { await sync(true); } catch (e) {}
+  if (!S.me) { booted = false; showGate('Tidak dapat memuat dunia. Pastikan koneksi dan coba lagi.'); return; }
+  shell(); render(); subscribeRealtime(); setInterval(() => sync(), 5000); setInterval(() => { updateAdv(); updateConn(); tickTop(); tickClock(); }, 1000); setInterval(() => { loadSel(); loadMine(); }, 10000);
+  let seen = false; try { seen = !!localStorage.getItem('cm_tut'); } catch (e) {} if (!seen) setTimeout(() => tutorial(0), 600);
+}
+sb.auth.onAuthStateChange((ev, session) => { if (session) S.token = session.access_token; if (ev === 'SIGNED_OUT') { booted = false; showGate(); } if ((ev === 'SIGNED_IN' || ev === 'INITIAL_SESSION') && session && !booted) boot(session); });
+(async () => { const { data } = await sb.auth.getSession(); if (!data.session) showGate(); else boot(data.session); })();
+window.__cm = { S, sync, go, pick, render };
