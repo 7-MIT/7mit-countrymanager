@@ -1,3 +1,9 @@
+# country.7mit
+
+Situs utama (root) = **country.7mit**, dunia bersama multipemain (lihat `cm/README.md`). Game 3D satu pemain versi awal ada di `/classic/`.
+
+---
+
 # 🌍 country.7mit — Country Manager 3D
 
 Game strategi 3D interaktif: jadilah **Presiden** dan pimpin negaramu selama 2 periode (10 tahun).

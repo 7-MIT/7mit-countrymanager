@@ -8,12 +8,13 @@ Simulasi pengelolaan negara multipemain. Semua angka dan peristiwa adalah **data
 - **Backend:** Edge Function `cm-api` (`supabase/functions/cm-api`) + tabel `cm_*` (`supabase/migrations`). RLS aktif tanpa policy, jadi klien tidak bisa menulis langsung. Semua aksi lewat fungsi: cek hak akses, validasi nilai, dan optimistic locking (`ver`).
 - **Real-time:** trigger DB → Supabase Realtime (topik privat `cm-world`) + polling `sync` tiap 5 detik.
 - **Pergantian tahun:** tombol “Majukan 1 tahun” memulai voting; semua pemain online harus setuju (satu penolakan membatalkan, batas 60 dtk, sendirian = langsung maju). Hanya admin UN yang dapat memaksa.
-- **3D:** globe 3D (`web/globe.js`) dan halaman “Negara 3D” (`web/country3d.js`): bentuk & luas dari batas negara asli (proyeksi luas-sama), permukaan relief 3D atau peta biasa, tile OSM/Mapbox (jalan, label) dimuat saat di-zoom.
-- **Frontend:** statis di `web/` (Leaflet + OpenStreetMap, Mapbox opsional lewat admin, ikon Lucide, bendera emoji).
+- **3D:** globe 3D (`globe.js`) dan halaman “Negara 3D” (`country3d.js`): bentuk & luas dari batas negara asli (proyeksi luas-sama), permukaan relief 3D atau peta biasa, tile OSM/Mapbox (jalan, label) dimuat saat di-zoom.
+- **Game klasik** (satu pemain) ada di `/classic/`.
+- **Frontend:** statis di root repo (`index.html`, `main.js`, …) (Leaflet + OpenStreetMap, Mapbox opsional lewat admin, ikon Lucide, bendera emoji).
 
 ## Menjalankan frontend
 ```bash
-cd cm/web && python3 -m http.server 8080
+python3 -m http.server 8080   # dari root repo
 ```
 Tambahkan URL situs (mis. `http://localhost:8080/`) ke **Authentication → URL Configuration → Redirect URLs** di Supabase agar login Google kembali ke aplikasi.
 

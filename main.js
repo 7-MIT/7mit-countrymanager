@@ -16,7 +16,8 @@ function showGate(msg) {
   <p>Dunia bersama untuk semua pemain: jadi presiden atau warga, kelola ekonomi, dagang, politik, dan diplomasi. Anda harus masuk lebih dulu untuk bermain.</p>
   <button class="btn pri big" id="gLogin">${ic('log-in')} Masuk dengan Google</button>
   ${msg ? `<div class="banner" style="margin-top:16px">${ic('triangle-alert')}<div>${esc(msg)}</div></div>` : ''}
-  <div class="sub" style="margin-top:18px">Login dikelola oleh server.7mit (Supabase Auth). Seluruh angka dan peristiwa adalah data permainan.</div></div></div>`;
+  <div style="margin-top:14px"><a class="sub" href="classic/">Mode klasik: game 3D satu pemain</a></div>
+  <div class="sub" style="margin-top:12px">Login dikelola oleh server.7mit (Supabase Auth). Seluruh angka dan peristiwa adalah data permainan.</div></div></div>`;
   refreshIcons();
   $('#gLogin').onclick = async (e) => { const b = e.currentTarget; b.disabled = true; b.innerHTML = `${ic('loader-circle', 'spin')} Mengalihkan ke Google…`; refreshIcons();
     const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
