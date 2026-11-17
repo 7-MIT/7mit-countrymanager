@@ -123,7 +123,18 @@ async function aiPresidents(batch) { // batch: [{r, pc}] -> {code: {goal, acts, 
 // ================= KEPUTUSAN DIPLOMASI & PARLEMEN OLEH GEMINI =================
 // Klien memanggil cm-npc (action:'proxy') untuk aksi tertentu; cm-npc meneruskan ke cm-api (validasi & efek tetap di sana),
 // lalu Gemini memutuskan sikap NPC/parlemen. Bila keputusannya beda dari aturan, hasilnya dikoreksi di basis data (terbatas & tervalidasi).
-const PROXIED = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law']);
+const PROXIED = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law', 'motion']);
+const MOTIONS = { transparansi: 'Mosi Transparansi', hak_warga: 'Mosi Hak Warga', layanan_publik: 'Mosi Layanan Publik', keamanan: 'Mosi Keamanan' };
+const MOTION_FX = { transparansi: 'kepercayaan publik +6, korupsi -4', hak_warga: 'kepuasan +4, stabilitas +2, investasi -1', layanan_publik: 'kesehatan +4, infrastruktur +3, kas -0,3% PDB, kepuasan +2', keamanan: 'kesiapan militer +8, stabilitas +2, kepuasan -2' };
+const MOTION_FIELDS = { transparansi: [['gov', 'trust'], ['gov', 'corruption']], hak_warga: [['gov', 'approval'], ['gov', 'stability'], ['gov', 'invest']], layanan_publik: [['stock', 'health'], ['stock', 'infra'], [null, 'treasury'], [null, 'debt'], ['gov', 'approval']], keamanan: [['gov', 'readiness'], ['gov', 'stability'], ['gov', 'approval']] };
+const getF = (c, [a, k]) => (a ? c[a][k] : c[k]), setF = (c, [a, k], v) => { if (a) c[a][k] = v; else c[k] = v; };
+function applyMotionFx(c, m) { // salinan efek mosi di cm-api (engine.applyMotion)
+  const g = c.gov;
+  if (m === 'transparansi') { g.trust = clamp(g.trust + 6, 0, 100); g.corruption = clamp(g.corruption - 4, 0, 100); }
+  if (m === 'hak_warga') { g.approval = clamp(g.approval + 4, 0, 100); g.stability = clamp(g.stability + 2, 0, 100); g.invest = clamp(g.invest - 1, 0, 100); }
+  if (m === 'layanan_publik') { c.stock.health = clamp(c.stock.health + 4, 0, 100); c.stock.infra = clamp(c.stock.infra + 3, 0, 100); c.treasury -= c.gdp * 0.003; if (c.treasury < 0) { c.debt -= c.treasury; c.treasury = 0; } g.approval = clamp(g.approval + 2, 0, 100); }
+  if (m === 'keamanan') { g.readiness = clamp(g.readiness + 8, 0, 100); g.stability = clamp(g.stability + 2, 0, 100); g.approval = clamp(g.approval - 2, 0, 100); }
+}
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const shared = (a, b) => (a.mem || []).some(x => x !== 'UN' && (b.mem || []).includes(x));
 async function cas(code, fn) { // ubah data negara dengan penguncian optimistik; sinkron slim.war & updated_at agar klien melihat perubahan
@@ -158,24 +169,27 @@ async function refine(inner, fwd, d, pre, uid) {
     d.status = acc ? 'accepted' : 'rejected'; d.note = `${acc ? 'Perdamaian tercapai' : 'NPC menolak perdamaian'}: ${why}`; return;
   }
   const taxKeys = ['taxInc', 'taxCorp'], isTax = inner === 'set_policy' && taxKeys.some(k => fwd.policy && k in fwd.policy);
-  if (d.vote && (isTax || inner === 'propose_law' || inner === 'repeal_law')) {
+  const isMotion = inner === 'motion' && !!MOTIONS[fwd.motion];
+  if (d.vote && (isTax || isMotion || inner === 'propose_law' || inner === 'repeal_law')) {
     const pr = await presOf(uid, fwd.session); if (!pr) return; const c = pr.data, v = d.vote, rule = !!v.passed, parties = (c.gov.parties || []).map(x => x.name).slice(0, 5).join(', ') || 'partai-partai';
-    const desc = isTax ? `usulan perubahan pajak: penghasilan ${pre?.taxInc ?? '?'}% -> ${fwd.policy.taxInc ?? pre?.taxInc ?? '?'}%, korporasi ${pre?.taxCorp ?? '?'}% -> ${fwd.policy.taxCorp ?? pre?.taxCorp ?? '?'}%` : inner === 'propose_law' ? `RUU baru "${String(fwd.law).replace(/_/g, ' ')}"` : `usulan pencabutan UU "${String(fwd.law).replace(/_/g, ' ')}"`;
+    const desc = isMotion ? `${MOTIONS[fwd.motion]} (dampak bila disetujui: ${MOTION_FX[fwd.motion]})` : isTax ? `usulan perubahan pajak: penghasilan ${pre?.taxInc ?? '?'}% -> ${fwd.policy.taxInc ?? pre?.taxInc ?? '?'}%, korporasi ${pre?.taxCorp ?? '?'}% -> ${fwd.policy.taxCorp ?? pre?.taxCorp ?? '?'}%` : inner === 'propose_law' ? `RUU baru "${String(fwd.law).replace(/_/g, ' ')}"` : `usulan pencabutan UU "${String(fwd.law).replace(/_/g, ' ')}"`;
     const o = await llm(`Kamu mensimulasikan sidang parlemen 100 kursi dalam game simulasi (data fiksi) untuk negara ${dos(c)}.\nPartai: ${parties}. Kursi koalisi pemerintah: ${v.coalition}. Ideologi negara: ${c.gov.ideology}, kepercayaan publik ${Math.round(c.gov.trust)}, korupsi ${Math.round(c.gov.corruption)}, utang ${(c.debt / Math.max(1, c.gdp) * 100).toFixed(0)}% PDB, kas ${c.treasury.toFixed(1)} M$.\nMosi: ${desc}.\nModel statistik memprediksi: setuju ${v.yes}, menolak ${v.no}, abstain ${v.abstain} (${rule ? 'LOLOS' : 'GAGAL'}).\nTentukan hasil akhir yang realistis (boleh menyimpang maksimal 20 suara dari prediksi, hanya bila ada alasan politik kuat) dan tulis 3 kutipan debat anggota parlemen dengan partai berbeda, bahasa Indonesia, maks 160 karakter per kutipan. yes+no+abstain harus 100.\nKeluarkan JSON: {"yes":int,"no":int,"abstain":int,"debate":[{"who":"Nama (Partai)","said":"..."}]}`);
     if (!o || ![o.yes, o.no, o.abstain].every(Number.isInteger) || o.yes + o.no + o.abstain !== 100 || o.yes < 0 || o.no < 0 || o.abstain < 0 || Math.abs(o.yes - v.yes) > 20) return;
     const passed = o.yes > 50, debate = (o.debate || []).slice(0, 3).map(x => ({ who: clip(x?.who, 60), said: clip(x?.said, 170) })).filter(x => x.who && x.said);
     if (passed !== rule) {
       if (isTax) { const tax = {}; for (const k of taxKeys) if (fwd.policy && k in fwd.policy) tax[k] = passed ? fwd.policy[k] : pre?.[k]; await cas(pr.code, cc => { for (const k in tax) if (tax[k] !== undefined) cc.pol[k] = tax[k]; }); }
+      else if (isMotion) await cas(pr.code, cc => { if (passed) applyMotionFx(cc, fwd.motion); else for (const f of MOTION_FIELDS[fwd.motion]) if (pre?.snap?.[f[1]] !== undefined) setF(cc, f, pre.snap[f[1]]); });
       else if (inner === 'propose_law') await cas(pr.code, cc => { cc.gov.laws = cc.gov.laws.filter(x => x !== fwd.law); if (passed) cc.gov.laws.push(fwd.law); });
       else await cas(pr.code, cc => { if (passed) cc.gov.laws = cc.gov.laws.filter(x => x !== fwd.law); else if (!cc.gov.laws.includes(fwd.law)) cc.gov.laws.push(fwd.law); }); }
     const head = debate[0] ? ` Debat: ${debate[0].who}: "${debate[0].said}"` : '';
-    await fixNews(pr.code, /pajak|RUU|Pencabutan/i, isTax ? `Parlemen ${passed ? 'setujui' : 'tolak'} usulan pajak ${c.name}` : inner === 'propose_law' ? `RUU "${String(fwd.law).replace(/_/g, ' ')}" di ${c.name}: ${passed ? 'DISAHKAN' : 'DITOLAK'}` : `Pencabutan "${String(fwd.law).replace(/_/g, ' ')}" di ${c.name}: ${passed ? 'DISETUJUI' : 'DITOLAK'}`, `Suara: ${o.yes} setuju, ${o.no} menolak, ${o.abstain} abstain.${head}`);
+    await fixNews(pr.code, /pajak|RUU|Pencabutan|Mosi/i, isMotion ? `${MOTIONS[fwd.motion]} di parlemen ${c.name}: ${passed ? 'DISETUJUI' : 'DITOLAK'}` : isTax ? `Parlemen ${passed ? 'setujui' : 'tolak'} usulan pajak ${c.name}` : inner === 'propose_law' ? `RUU "${String(fwd.law).replace(/_/g, ' ')}" di ${c.name}: ${passed ? 'DISAHKAN' : 'DITOLAK'}` : `Pencabutan "${String(fwd.law).replace(/_/g, ' ')}" di ${c.name}: ${passed ? 'DISETUJUI' : 'DITOLAK'}`, `Suara: ${o.yes} setuju, ${o.no} menolak, ${o.abstain} abstain.${head}`);
     d.vote = { ...v, yes: o.yes, no: o.no, abstain: o.abstain, passed, debate }; if (isTax) d.note = passed ? 'Parlemen menyetujui perubahan pajak.' : 'Parlemen MENOLAK perubahan pajak; tarif lama tetap berlaku.'; }
 }
 async function proxy(tok, apikey, uid, body) {
   const inner = String(body.inner || ''); if (!PROXIED.has(inner)) return { status: 404, json: { ok: false, error: 'Aksi tidak dikenal' } };
   const fwd = { ...body, action: inner }; delete fwd.inner; let pre = null;
   if (inner === 'set_policy' && fwd.policy) { const pr = await presOf(uid, fwd.session); if (pr) pre = { taxInc: pr.data.pol.taxInc, taxCorp: pr.data.pol.taxCorp }; }
+  if (inner === 'motion' && MOTION_FIELDS[fwd.motion]) { const pr = await presOf(uid, fwd.session); if (pr) { const snap = {}; for (const f of MOTION_FIELDS[fwd.motion]) snap[f[1]] = getF(pr.data, f); pre = { snap }; } }
   const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/cm-api`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}`, apikey: apikey || '' }, body: JSON.stringify(fwd) });
   const j = await r.json().catch(() => null); if (!r.ok || !j?.ok) return { status: r.status || 502, json: j || { ok: false, error: 'Kesalahan server' } };
   try { if (j.data) await refine(inner, fwd, j.data, pre, uid); } catch (e) { console.error('refine', e); }

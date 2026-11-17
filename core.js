@@ -44,7 +44,7 @@ export function modal({ title, icon, body = '', actions = [], wide }) {
 export function closeModal() { const m = $('#modal'); m.classList.add('hidden'); m.innerHTML = ''; }
 
 // ---------- API ----------
-const PROXY = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law']); // keputusan NPC/parlemen dipertajam Gemini lewat cm-npc
+const PROXY = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law', 'motion']); // keputusan NPC/parlemen dipertajam Gemini lewat cm-npc
 const EXTRA = new Set(['set_profile', 'builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
 export async function api(action, body = {}, { quiet = false, keepalive = false } = {}) {
   const { data: ses } = await sb.auth.getSession();
