@@ -70,6 +70,39 @@ function mood(R, c, builds) { const o = [];
   if (c.gov.approval > 62) o.push('Jujur, pemerintahan sekarang yang paling terasa kerjanya.');
   if (!o.length) o.push('Tahun yang biasa saja. Semoga tahun depan lebih baik.'); return pick(R, o); }
 
+// ---------- lapisan AI (Gemini). Kunci disimpan di tabel privat cm_secrets; bila gagal, jatuh ke templat ----------
+let KEY = null; const MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-flash-latest'];
+async function llm(prompt, maxMs = 40000) {
+  if (KEY === null) KEY = (await sb.from('cm_secrets').select('v').eq('k', 'gemini_key').maybeSingle()).data?.v || '';
+  if (!KEY) return null; const t0 = Date.now();
+  for (const m of MODELS) for (let a = 0; a < 2; a++) {
+    if (Date.now() - t0 > maxMs) return null;
+    try { const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, { method: 'POST', signal: AbortSignal.timeout(Math.max(3000, maxMs - (Date.now() - t0))), headers: { 'x-goog-api-key': KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.9, maxOutputTokens: 3000 } }) });
+      if (r.status === 503 || r.status === 429) { await new Promise(x => setTimeout(x, 700)); continue; } if (!r.ok) break;
+      const j = await r.json(), txt = j.candidates?.[0]?.content?.parts?.map(x => x.text || '').join('') || ''; const o = JSON.parse(txt.replace(/^```json|```$/g, '').trim()); return o; } catch (e) { /* coba model berikutnya */ } }
+  return null;
+}
+const clip = (v, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+const brief = (c) => `Negara: ${c.name}. Tahun ${c.year ?? ''}. Presiden: ${c.gov.president}. Kepuasan rakyat ${Math.round(c.gov.approval)}%, pertumbuhan ${c.growth.toFixed(1)}%, inflasi ${c.infl.toFixed(1)}%, pengangguran ${c.unemp.toFixed(1)}%, korupsi ${Math.round(c.gov.corruption)}/100, ${c.war?.length ? 'sedang berperang' : 'damai'}, tujuan kebijakan ${c.ai?.goal || '-'}.`;
+const PERSONA = ['pedagang pasar', 'guru honorer', 'sopir ojek', 'petani', 'mahasiswa', 'perawat', 'pemilik warung', 'buruh pabrik', 'pensiunan', 'pegawai kantoran', 'nelayan', 'pengusaha kecil'];
+const WARGA_RULE = 'Tulis dalam bahasa Indonesia sehari-hari, nada manusia nyata (boleh kesal, ragu, bangga, bercanda), maksimal 220 karakter per teks, tanpa hashtag, tanpa emoji berlebihan, jangan menyebut diri AI. Ini game simulasi, semua angka adalah data permainan.';
+async function aiCitizenReplies(c, posts, R) { // posts: [{id, body}] -> {id: [teks, teks]}
+  if (!posts.length) return {};
+  const people = posts.map((p, i) => `${i + 1}. [id ${p.id}] "${clip(p.body)}"`).join('\n'), who = Array.from({ length: 3 }, () => pick(R, PERSONA)).join(', ');
+  const o = await llm(`Kamu menulis balasan beberapa warga biasa di media sosial negara fiksi dalam game simulasi.\n${brief(c)}\nWarga yang membalas punya profesi acak seperti: ${who}. Balasan harus menanggapi ISI postingan dan terasa dipengaruhi keadaan negara di atas (jangan sebut angka persis kecuali natural). Beri 1-2 balasan berbeda sudut pandang per postingan.\n${WARGA_RULE}\nPostingan:\n${people}\nKeluarkan JSON: {"r":[{"id":<id>,"t":["balasan 1","balasan 2"]}]}`);
+  const out = {}; for (const x of o?.r || []) if (x && Array.isArray(x.t)) out[x.id] = x.t.map(t => clip(t, 220)).filter(Boolean).slice(0, 2); return out;
+}
+async function aiCitizenPosts(c, builds, R) {
+  const bs = builds.slice(0, 4).map(b => `${b.kind} di ${b.region?.adm3 || b.region?.adm2 || b.region?.adm1 || c.name}`).join('; ');
+  const o = await llm(`Kamu menulis 2 postingan spontan warga biasa di media sosial negara fiksi dalam game simulasi.\n${brief(c)}\n${bs ? `Proyek yang baru dibangun pemerintah: ${bs}.` : 'Tidak ada proyek baru.'}\nSatu postingan boleh membahas proyek/kebijakan, satu lagi kehidupan sehari-hari yang dipengaruhi ekonomi.\n${WARGA_RULE}\nKeluarkan JSON: {"p":["postingan 1","postingan 2"]}`);
+  return (o?.p || []).map(t => clip(t, 300)).filter(Boolean).slice(0, 2);
+}
+async function aiNewsSpin(items) { // items: [{n,goal,acts,ok}] -> tajuk analisis singkat
+  if (!items.length) return {};
+  const o = await llm(`Kamu jurnalis "Analisis Dunia" di game simulasi. Untuk tiap negara tulis SATU kalimat analisis tajam (maks 200 karakter) tentang arah kebijakan barunya, bahasa Indonesia formal-ringkas.\n${items.map((x, i) => `${i + 1}. ${x.n}: fokus ${x.goal}; langkah: ${x.acts}; evaluasi tahun lalu: ${x.ok}`).join('\n')}\nKeluarkan JSON: {"a":["kalimat 1","kalimat 2",...]} urut sesuai nomor.`);
+  const r = {}; (o?.a || []).forEach((t, i) => { if (t) r[i] = clip(t, 220); }); return r;
+}
+
 async function run() {
   const w = (await sb.from('cm_world').select('year,npc_year').eq('id', 1).single()).data; if (!w || (w.npc_year ?? 0) >= w.year) return { skipped: true, year: w?.year };
   const lock = await sb.from('cm_world').update({ npc_year: w.year }).eq('id', 1).or(`npc_year.is.null,npc_year.lt.${w.year}`).select('id'); if (!lock.data?.length) return { skipped: true, year: w.year };
@@ -91,17 +124,35 @@ async function run() {
       ins.push({ kind: 'trade', from_c: r.code, to_c: p.code, sector, value, tariff_from: tf, tariff_to: tf, status: 'pending', year }); news.push({ year, country: p.code, source: 'Harian Dunia', kind: 'perdagangan', title: `${n.name} menawarkan perdagangan ${sector} kepada ${p.data.name}`, body: `Nilai ${value.toFixed(2)} miliar USD/tahun, tarif ${tf}%. ${a > 40 ? 'Hubungan erat membuat tarif diturunkan.' : 'Menunggu jawaban presiden.'}` }); }
     const foe = ranked[ranked.length - 1]; if (foe && (foe[0].data.rel?.[p.code] || 0) < -40 && foe[0].data.ai?.tr.hawk > 0.55) news.push({ year, country: p.code, source: 'Harian Dunia', kind: 'konflik', title: `${foe[0].data.name} memperingatkan ${p.data.name}`, body: 'Hubungan memburuk. Diplomasi atau bantuan dapat meredakan ketegangan.' }); }
   if (ins.length) await sb.from('cm_offers').insert(ins);
-  // 3) warga NPC: posting sesuai keadaan & membalas postingan pemain
-  for (const p of players) { const c = p.data, Rc = rng(p.code + '|soc|' + year), builds = (await sb.from('cm_builds').select('kind,region').eq('country', p.code).eq('year', year - 1).limit(30)).data || [];
-    const posts = []; for (let i = 0; i < 2; i++) posts.push({ country: p.code, author: pick(Rc, NAMES), role: 'warga', body: mood(Rc, c, i ? [] : builds) }); await sb.from('cm_posts').insert(posts);
-    const recent = (await sb.from('cm_posts').select('id,body,uid').eq('country', p.code).not('uid', 'is', null).eq('hidden', false).order('id', { ascending: false }).limit(4)).data || [];
-    for (const po of recent) { const has = (await sb.from('cm_comments').select('id', { count: 'exact', head: true }).eq('post_id', po.id).is('uid', null)).count || 0; if (has >= 2) continue; await sb.from('cm_comments').insert({ post_id: po.id, country: p.code, uid: null, author: pick(Rc, NAMES), role: 'warga', body: reply(Rc, po.body, c) }); } }
+  // 3) warga NPC (AI Gemini; jatuh ke templat bila gagal): posting sesuai keadaan & balasan atas postingan pemain
+  await Promise.all(players.map(async (p) => { const c = { ...p.data, year }, Rc = rng(p.code + '|soc|' + year), builds = (await sb.from('cm_builds').select('kind,region').eq('country', p.code).eq('year', year - 1).limit(30)).data || [];
+    const recent = (await sb.from('cm_posts').select('id,body,uid').eq('country', p.code).not('uid', 'is', null).eq('hidden', false).order('id', { ascending: false }).limit(4)).data || [], todo = [];
+    for (const po of recent) { const has = (await sb.from('cm_comments').select('id', { count: 'exact', head: true }).eq('post_id', po.id).is('uid', null)).count || 0; if (has < 2) todo.push(po); }
+    const [aiPosts, aiRep] = await Promise.all([aiCitizenPosts(c, builds, Rc), aiCitizenReplies(c, todo, Rc)]);
+    const texts = aiPosts.length ? aiPosts : [mood(Rc, c, builds), mood(Rc, c, [])]; await sb.from('cm_posts').insert(texts.map(body => ({ country: p.code, author: pick(Rc, NAMES), role: 'warga', body })));
+    for (const po of todo) for (const t of (aiRep[po.id]?.length ? aiRep[po.id] : [reply(Rc, po.body, c)])) await sb.from('cm_comments').insert({ post_id: po.id, country: p.code, uid: null, author: pick(Rc, NAMES), role: 'warga', body: t }); }));
+  // analisis berita bergaya jurnalis (AI)
+  { const top = shifts.slice(0, 6), spin = await aiNewsSpin(top.map(r => ({ n: r.data.name, goal: GOALS[r.t.goal].t, acts: r.t.acts.map(k => ACTS[k][3]).join(', '), ok: r.t.learned ? (r.t.learned.reward >= 0 ? 'berhasil' : 'kurang berhasil') : 'belum ada' })));
+    top.forEach((r, i) => { if (spin[i]) { const n = news.find(x => x.country === r.code && x.source === 'Analisis Dunia'); if (n) n.body = spin[i] + ' — ' + n.body; } }); }
   if (news.length) await sb.from('cm_news').insert(news);
   return { ok: true, year, npcs: saved, offers: ins.length, news: news.length };
+}
+// balasan warga NPC langsung setelah pemain memposting (bukan menunggu pergantian tahun)
+async function react(uid, postId) {
+  const po = (await sb.from('cm_posts').select('id,body,uid,country,hidden,ts').eq('id', postId).maybeSingle()).data; if (!po || po.hidden || po.uid !== uid) return { skipped: 'bukan postingan Anda' };
+  if (Date.now() - new Date(po.ts).getTime() > 120_000) return { skipped: 'terlalu lama' };
+  const has = (await sb.from('cm_comments').select('id', { count: 'exact', head: true }).eq('post_id', po.id).is('uid', null)).count || 0; if (has >= 2) return { skipped: 'sudah dibalas' };
+  const row = (await sb.from('cm_countries').select('data').eq('code', po.country).single()).data; if (!row) return { skipped: 'negara tidak ada' };
+  const w = (await sb.from('cm_world').select('year').eq('id', 1).single()).data, c = { ...row.data, year: w.year }, R = rng(po.id + '|react');
+  const ai = await aiCitizenReplies(c, [po], R), list = ai[po.id]?.length ? ai[po.id] : [reply(R, po.body, c)];
+  for (const t of list) await sb.from('cm_comments').insert({ post_id: po.id, country: po.country, uid: null, author: pick(R, NAMES), role: 'warga', body: t });
+  return { ok: true, replies: list.length, ai: !!ai[po.id]?.length };
 }
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try { const tok = (req.headers.get('Authorization') || '').replace('Bearer ', ''); const { data, error } = await sb.auth.getUser(tok); if (error || !data.user) return new Response(JSON.stringify({ ok: false, error: 'Silakan masuk terlebih dahulu' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } });
+    const body = await req.json().catch(() => ({}));
+    if (body.action === 'react') return new Response(JSON.stringify({ ok: true, data: await react(data.user.id, Number(body.post_id)) }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     return new Response(JSON.stringify({ ok: true, data: await run() }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
   } catch (e) { console.error(e); return new Response(JSON.stringify({ ok: false, error: 'Kesalahan server: ' + (e?.message || e) }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } }); }
 });
