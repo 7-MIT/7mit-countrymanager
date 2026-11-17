@@ -203,3 +203,6 @@ tr.click:hover{background:rgba(255,255,255,.06)}
 .cityhd .btn{color:inherit}
 .citygl{flex:1;min-height:0;position:relative}.citygl canvas{display:block;width:100%;height:100%}
 .cityhud{padding:10px 14px;background:#3a0a12;color:#fff;max-height:34vh;overflow:auto}
+
+.citystats{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;opacity:.95}.citystats span{display:inline-flex;gap:5px;align-items:center}.citystats svg{width:14px;height:14px}
+.cityhd{flex-wrap:wrap}.citytime button{padding:4px 8px}

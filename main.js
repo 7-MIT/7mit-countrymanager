@@ -30,7 +30,7 @@ function showGate(msg) {
 const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
 function shell() {
   app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : k === 'inbox' ? `<span class="dot hidden" data-rep></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
-   <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="account">${ic('circle-user-round')} <span>Akun</span></button><button class="nav" data-act="toStart">${ic('house')} <span>Menu awal</span></button><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
+   <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="openCapital">${ic('building-2')} <span>Kota 3D</span></button><button class="nav" data-act="account">${ic('circle-user-round')} <span>Akun</span></button><button class="nav" data-act="toStart">${ic('house')} <span>Menu awal</span></button><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
    <div class="main"><div class="top"><button class="iconbtn menuBtn" data-act="menu" aria-label="Menu">${ic('menu')}</button>
     <div class="search">${ic('search')}<input id="gSearch" type="search" placeholder="Cari negara atau teritori…" autocomplete="off"><div class="sres hidden" id="sRes"></div></div>
     <span class="chip" id="roleChip"></span><div class="grow"></div>
@@ -161,7 +161,7 @@ function landHud() {
   </div><div class="card"><h3>${ic('list')} Proyek ${esc(cty(S.sel)?.name || '')} (${L.builds.length})</h3>${L.builds.length ? `<div class="scroll" style="max-height:300px"><div class="stack">${[...L.builds].reverse().slice(0, 60).map(b => { const k = LKINDS.find(x => x[0] === b.kind); const rd = ROADK.find(x => x[0] === b.kind); return `<div class="item row between wrap"><div>${ic(rd ? rd[1] : (k?.[1] || 'building'))} <b>${rd ? `${rd[2]} ${b.km} km` : esc(k?.[2] || b.kind)}</b><div class="sub">${esc(Object.values(b.region || {}).reverse().join(', ') || 'Wilayah tak tercatat')} · ${usd(+b.cost)} · tahun ${b.year}</div></div>${mine ? `<button class="btn sm red" data-act="buildDel" data-id="${b.id}">${ic('trash-2')}</button>` : ''}</div>`; }).join('')}</div></div>` : `<div class="empty">${ic('hammer')}<div>Belum ada proyek.${mine ? ' Mulai bangun jalan atau gedung!' : ''}</div></div>`}</div></div>`;
   refreshIcons();
 }
-async function reloadBuilds(first) { if (S.page !== 'land') return; try { const r = await api('builds', { country: S.sel }, { quiet: true }); S.land.builds = r.builds; LAND?.setBuilds(r.builds, !!first); landHud(); refreshCity(); } catch (e) {} }
+async function reloadBuilds(first) { if (S.page !== 'land' && !CITY) return; try { const r = await api('builds', { country: S.sel }, { quiet: true }); S.land.builds = r.builds; LAND?.setBuilds(r.builds, !!first); landHud(); refreshCity(); } catch (e) {} }
 async function loadRegions(level) {
   const L = S.land; if (!LAND) return; if (L.regs[level]) { LAND.setRegions(L.regs[level]); return; }
   if (level === 'zona') { L.regs.zona = LAND.gridRegions(); LAND.setRegions(L.regs.zona); return; }
@@ -193,7 +193,8 @@ let hoverTok = 0; function hoverName(pt) { const my = ++hoverTok, el = $('#landI
 let CITY = null, CITYCTX = null;
 const cityBuilds = () => S.land.builds.filter(b => b.region?.c === CITYCTX?.c);
 function closeCity() { if (CITY) { CITY.dispose(); CITY = null; } CITYCTX = null; $('#cityov')?.remove(); }
-function refreshCity() { if (!CITY) return; const bs = cityBuilds(); CITY.setPlots(bs.filter(b => !b.path)); CITY.setRoads(bs.filter(b => b.path)); cityHud(); }
+function cityStats() { const el = $('#cityStats'), c = cty(S.sel), d = (S.me?.president === S.sel ? S.M?.country : S.D?.country) || {}; if (!el || !c) return; const t = d.treasury ?? c.treasury, ap = d.gov?.approval ?? c.approval; el.innerHTML = `<span>${c.flag} ${esc(c.name)}</span>${t !== undefined ? `<span>${ic('landmark')} ${usd(t)}</span>` : ''}<span>${ic('trending-up')} ${usd(c.gdp)}</span><span>${ic('users')} ${fmt(c.pop)}</span>${ap !== undefined ? `<span>${ic('smile')} ${fmt(ap, 0)}%</span>` : ''}<span>${ic('calendar')} ${S.world.year}</span>`; refreshIcons(); }
+function refreshCity() { if (!CITY) return; cityStats(); const bs = cityBuilds(); CITY.setPlots(bs.filter(b => !b.path)); CITY.setRoads(bs.filter(b => b.path)); cityHud(); }
 function cityHud() {
   const el = $('#cityHud'); if (!el || !CITYCTX) return; const L = S.land, mine = S.me?.president === S.sel, cs = costScale(), cx = CITYCTX, n = cx.pts.length; let km = 0; for (let i = 1; i < n; i++) km += Math.hypot(cx.pts[i][0] - cx.pts[i - 1][0], cx.pts[i][1] - cx.pts[i - 1][1]) * 0.5;
   el.innerHTML = mine ? `<div class="tabs"><button class="${cx.mode === 'plot' ? 'on' : ''}" data-act="cityMode" data-v="plot">${ic('building-2')} Bangun gedung</button><button class="${cx.mode === 'road' ? 'on' : ''}" data-act="cityMode" data-v="road">${ic('route')} Jalan & rel</button></div>
@@ -205,8 +206,8 @@ function cityHud() {
 async function openCity(pt) {
   closeCity(); const names = await namesAt(pt), q = 0.03, lat = Math.round(pt.lat / q) * q, lng = Math.round(pt.lon / q) * q, c = `${Math.round(pt.lat / q)},${Math.round(pt.lon / q)}`;
   CITYCTX = { lat: +lat.toFixed(4), lng: +lng.toFixed(4), c, names, mode: 'plot', pts: [] };
-  const ov = document.createElement('div'); ov.id = 'cityov'; ov.className = 'cityov'; ov.innerHTML = `<div class="cityhd"><b>${ic('building-2')} Kota 3D — ${esc(nameLabel(names) || 'Wilayah')}</b><span class="sub">1 petak ≈ 0,4 km · seret untuk memutar, gulir untuk zoom</span><div class="grow"></div><button class="btn sm" data-act="cityClose">${ic('x')} Tutup</button></div><div id="cityGL" class="citygl"></div><div id="cityHud" class="cityhud"></div>`; document.body.appendChild(ov);
-  try { CITY = new Region3D($('#cityGL'), { lat: CITYCTX.lat, lng: CITYCTX.lng, onPlot: cityPlot, onNode: (x, z) => { CITYCTX.pts.push([x, z]); CITY.setPreview(CITYCTX.pts, S.land.road); cityHud(); } }); } catch (e) { toast('WebGL tidak tersedia untuk Kota 3D', 'warn'); closeCity(); return; }
+  const ov = document.createElement('div'); ov.id = 'cityov'; ov.className = 'cityov'; ov.innerHTML = `<div class="cityhd"><b>${ic('building-2')} Kota 3D — ${esc(nameLabel(names) || 'Wilayah')}</b><span class="citystats" id="cityStats"></span><div class="grow"></div><div class="tabs citytime">${[['real', 'clock', 'Jam nyata'], ['day', 'sun', 'Siang'], ['night', 'moon', 'Malam']].map(([v, i, t]) => `<button class="${(S.cityTime || 'real') === v ? 'on' : ''}" data-act="cityTime" data-v="${v}" title="${t}">${ic(i)}</button>`).join('')}</div><button class="btn sm" data-act="cityClose">${ic('x')} Tutup</button></div><div id="cityGL" class="citygl"></div><div id="cityHud" class="cityhud"></div>`; document.body.appendChild(ov);
+  try { CITY = new Region3D($('#cityGL'), { lat: CITYCTX.lat, lng: CITYCTX.lng, tz: cty(S.sel)?.tz || 0, timeMode: S.cityTime || 'real', onPlot: cityPlot, onNode: (x, z) => { CITYCTX.pts.push([x, z]); CITY.setPreview(CITYCTX.pts, S.land.road); cityHud(); } }); } catch (e) { toast('WebGL tidak tersedia untuk Kota 3D', 'warn'); closeCity(); return; }
   refreshCity();
 }
 function cityRegion(i, j) { return { ...CITYCTX.names, c: CITYCTX.c, ...(i === undefined ? {} : { plot: i + ',' + j }) }; }
@@ -270,6 +271,8 @@ const A = {
   mapMode: (el) => { S.mapMode = el.dataset.v; destroyMap(); render(); },
   menu: () => $('#side').classList.toggle('open'),
   cityClose: () => closeCity(),
+  cityTime: (el) => { S.cityTime = el.dataset.v; CITY?.setTimeMode(S.cityTime); if (CITY) CITY.envT = 9; $$('[data-act=cityTime]').forEach(b => b.classList.toggle('on', b.dataset.v === S.cityTime)); },
+  openCapital: async () => { const c = cty(S.sel); if (!c) return; $('#side')?.classList.remove('open'); await openCity({ lat: c.lat, lon: c.lng }); reloadBuilds(); },
   cityMode: (el) => { if (!CITY) return; CITYCTX.mode = el.dataset.v; CITYCTX.pts = []; CITY.setMode(CITYCTX.mode === 'road' ? 'road' : 'plot'); CITY.setPreview([], S.land.road); cityHud(); },
   cityRoadUndo: () => { CITYCTX.pts.pop(); CITY.setPreview(CITYCTX.pts, S.land.road); cityHud(); },
   cityRoadDone: (el) => { const pts = CITYCTX.pts.map(([x, z]) => CITY.toLL(x, z)); act(el, 'road_place', { kind: S.land.road, points: pts, region: cityRegion() }, (r) => `Jalur ${r.km} km dibangun (${usd(r.cost)})`, async () => { CITYCTX.pts = []; CITY.setPreview([], S.land.road); await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }); },
@@ -404,7 +407,7 @@ let booted = false, running = false;
 const startHooks = {
   refresh: async () => { await sync(true); await Promise.all([loadMine(true), loadSel(true)]); },
   start: () => { destroyMap(); destroyLand(); S.inStart = true; showStart(app, startHooks); },
-  enter: () => { stopStart(); S.inStart = false; S.page = S.page === 'land' ? 'land' : (S.me?.president ? 'dash' : S.page || 'dash'); shell(); render(); loadSel(true); loadMine(true); let seen = false; try { seen = !!localStorage.getItem('cm_tut'); } catch (e) {} if (!seen) setTimeout(() => tutorial(0), 600); },
+  enter: () => { stopStart(); S.inStart = false; S.page = S.page === 'land' ? 'land' : (S.me?.president ? 'dash' : S.page || 'dash'); shell(); render(); loadSel(true); loadMine(true); let seen = false; try { seen = !!localStorage.getItem('cm_tut'); } catch (e) {} if (!seen) setTimeout(() => tutorial(0), 600); else if (S.me?.president || S.me?.citizenship) { S.sel = S.me.president || S.me.citizenship; setTimeout(() => A.openCapital(), 300); } },
   logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
 };
 async function boot(session) {
