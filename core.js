@@ -53,7 +53,18 @@ const PUB = new Set(['pub_feed', 'pub_post', 'pub_like', 'pub_comments', 'pub_co
 const I18N_FN = new Set(['tr', 'lang_get', 'lang_set']); // terjemahan antarmuka (cm-i18n)
 const PRES = new Set(['pres_state', 'coalition_set', 'parliament_dissolve', 'decree', 'appoint_direct', 'amnesty']); // Pusat Pemerintahan (cm-pres)
 const EXTRA = new Set(['set_profile', 'builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
-export async function api(action, body = {}, { quiet = false, keepalive = false } = {}) {
+// jabatan presiden terikat sesi + detak jantung; bila terlepas (tab tidur, muat ulang) pulihkan otomatis lalu ulangi aksi
+const LP = (v) => { try { if (v === undefined) { const [c, t] = (localStorage.getItem('cm_lastpres') || '').split('|'); return c && Date.now() - (+t || 0) < 30 * 60_000 ? c : null; } v ? localStorage.setItem('cm_lastpres', v + '|' + Date.now()) : localStorage.removeItem('cm_lastpres'); } catch (e) { return null; } };
+export const lastPres = LP;
+let reclaiming = null;
+export async function reclaimPresidency() { const code = LP(); if (!code) return false; if (!reclaiming) reclaiming = (async () => { try { const { data: ses } = await sb.auth.getSession(), token = ses?.session?.access_token; if (!token) return false; const r = await fetch(`${SB_URL}/functions/v1/cm-api`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY }, body: JSON.stringify({ action: 'claim', code, session: SESSION }) }); const j = await r.json().catch(() => null); return !!j?.ok; } catch (e) { return false; } finally { setTimeout(() => { reclaiming = null; }, 3000); } })(); return reclaiming; }
+const NEED_PRES = /sedang menjabat|tidak sedang menjabat|Hanya presiden|bukan presiden/i;
+export async function api(action, body = {}, opts = {}) {
+  try { const r = await apiRaw(action, body, { ...opts, _tryRe: true }); if (action === 'claim' && body.code) LP(body.code); else if (['release', 'become_citizen', 'leave_citizenship', 'resign'].includes(action)) LP(null); return r; }
+  catch (e) { if (!opts._retried && !['claim', 'release', 'sync'].includes(action) && LP() && NEED_PRES.test(e.message || '') && await reclaimPresidency()) { try { const r = await apiRaw(action, body, { ...opts, _retried: true }); if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('pres-restored')); return r; } catch (e2) { throw e2; } } throw e; }
+}
+async function apiRaw(action, body = {}, { quiet = false, keepalive = false, _tryRe = false, _retried = false } = {}) {
+  if (_tryRe && LP() && quiet === false) quiet = 'defer';
   const { data: ses } = await sb.auth.getSession();
   const token = ses?.session?.access_token; if (!token) throw new Error('Sesi login berakhir. Silakan masuk lagi.');
   let res;
@@ -63,7 +74,7 @@ export async function api(action, body = {}, { quiet = false, keepalive = false 
     catch (e) { if (!viaNpc) throw e; res = await fetch(`${SB_URL}/functions/v1/cm-api`, { method: 'POST', keepalive, headers: hdr, body: JSON.stringify({ action, session: SESSION, ...body }) }); }
   } catch (e) { S.online = false; throw new Error('Tidak dapat terhubung ke server'); }
   let j = null; try { j = await res.json(); } catch (e) {}
-  if (!res.ok || !j?.ok) { const msg = j?.error || j?.message || `Kesalahan server (${res.status})`; if (res.status === 401) { S.online = false; } if (!quiet) toast(msg, 'err'); const err = new Error(msg); err.status = res.status; err.handled = !quiet; throw err; }
+  if (!res.ok || !j?.ok) { const msg = j?.error || j?.message || `Kesalahan server (${res.status})`; if (res.status === 401) { S.online = false; } const willRetry = quiet === 'defer' && NEED_PRES.test(msg) && action !== 'claim'; if (!quiet && !willRetry) toast(msg, 'err'); const err = new Error(msg); err.status = res.status; err.handled = !quiet && !willRetry; throw err; }
   return j.data;
 }
 // aksi pemain: menampilkan status memuat pada tombol, hasil sukses/gagal lewat toast
