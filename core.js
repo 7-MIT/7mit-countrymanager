@@ -44,13 +44,16 @@ export function modal({ title, icon, body = '', actions = [], wide }) {
 export function closeModal() { const m = $('#modal'); m.classList.add('hidden'); m.innerHTML = ''; }
 
 // ---------- API ----------
+const PROXY = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law']); // keputusan NPC/parlemen dipertajam Gemini lewat cm-npc
 const EXTRA = new Set(['set_profile', 'builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
 export async function api(action, body = {}, { quiet = false, keepalive = false } = {}) {
   const { data: ses } = await sb.auth.getSession();
   const token = ses?.session?.access_token; if (!token) throw new Error('Sesi login berakhir. Silakan masuk lagi.');
   let res;
   try {
-    res = await fetch(`${SB_URL}/functions/v1/${EXTRA.has(action) ? 'cm-extra' : 'cm-api'}`, { method: 'POST', keepalive, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY }, body: JSON.stringify({ action, session: SESSION, ...body }) });
+    const viaNpc = PROXY.has(action), payload = viaNpc ? { action: 'proxy', inner: action, session: SESSION, ...body } : { action, session: SESSION, ...body }, hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY };
+    try { res = await fetch(`${SB_URL}/functions/v1/${viaNpc ? 'cm-npc' : EXTRA.has(action) ? 'cm-extra' : 'cm-api'}`, { method: 'POST', keepalive, headers: hdr, body: JSON.stringify(payload) }); }
+    catch (e) { if (!viaNpc) throw e; res = await fetch(`${SB_URL}/functions/v1/cm-api`, { method: 'POST', keepalive, headers: hdr, body: JSON.stringify({ action, session: SESSION, ...body }) }); }
   } catch (e) { S.online = false; throw new Error('Tidak dapat terhubung ke server'); }
   let j = null; try { j = await res.json(); } catch (e) {}
   if (!res.ok || !j?.ok) { const msg = j?.error || j?.message || `Kesalahan server (${res.status})`; if (res.status === 401) { S.online = false; } if (!quiet) toast(msg, 'err'); const err = new Error(msg); err.status = res.status; err.handled = !quiet; throw err; }

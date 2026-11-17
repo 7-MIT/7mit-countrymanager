@@ -120,6 +120,84 @@ async function aiPresidents(batch) { // batch: [{r, pc}] -> {code: {goal, acts, 
   const out = {}; for (const x of o?.d || []) if (x?.c && GOALS[x.goal] && Array.isArray(x.a)) out[String(x.c).toUpperCase()] = { goal: x.goal, acts: x.a.map(String), why: clip(x.why, 240) }; return out;
 }
 
+// ================= KEPUTUSAN DIPLOMASI & PARLEMEN OLEH GEMINI =================
+// Klien memanggil cm-npc (action:'proxy') untuk aksi tertentu; cm-npc meneruskan ke cm-api (validasi & efek tetap di sana),
+// lalu Gemini memutuskan sikap NPC/parlemen. Bila keputusannya beda dari aturan, hasilnya dikoreksi di basis data (terbatas & tervalidasi).
+const PROXIED = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law']);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const shared = (a, b) => (a.mem || []).some(x => x !== 'UN' && (b.mem || []).includes(x));
+async function cas(code, fn) { // ubah data negara dengan penguncian optimistik; sinkron slim.war & updated_at agar klien melihat perubahan
+  for (let i = 0; i < 6; i++) { const row = (await sb.from('cm_countries').select('data,slim,ver').eq('code', code).single()).data; if (!row) return false; const d = structuredClone(row.data); fn(d);
+    const r = await sb.from('cm_countries').update({ data: d, slim: { ...row.slim, war: d.war, approval: d.gov.approval }, ver: row.ver + 1, updated_at: new Date().toISOString() }).eq('code', code).eq('ver', row.ver).select('code'); if (r.data?.length) return true; await sleep(40 + Math.random() * 120 * (i + 1)); }
+  return false;
+}
+async function fixNews(code, re, title, body) { const rows = (await sb.from('cm_news').select('id,title').eq('country', code).order('id', { ascending: false }).limit(8)).data || [], n = rows.find(x => re.test(x.title)); if (n) await sb.from('cm_news').update({ title, body }).eq('id', n.id); }
+async function presOf(uid, session) { if (!session) return null; const r = (await sb.from('cm_countries').select('code,data,president_seen').eq('president_uid', uid).eq('president_session', session).maybeSingle()).data; return r && r.president_seen && Date.now() - new Date(r.president_seen).getTime() < PRES_TTL * 2 ? r : null; }
+const dos = (c, extra = '') => `${c.name} (presiden ${c.gov.president}; watak agresif ${(c.ai?.tr.hawk ?? 0.5).toFixed(1)}, populis ${(c.ai?.tr.pop ?? 0.5).toFixed(1)}, liberal ${(c.ai?.tr.lib ?? 0.5).toFixed(1)}, hati-hati ${(c.ai?.tr.caut ?? 0.5).toFixed(1)}; PDB ${c.gdp.toFixed(1)} M$, tumbuh ${c.growth.toFixed(1)}%, inflasi ${c.infl.toFixed(1)}%, pengangguran ${c.unemp.toFixed(1)}%, kepuasan ${Math.round(c.gov.approval)}%, stabilitas ${Math.round(c.gov.stability)}, kesiapan militer ${Math.round(c.gov.readiness ?? 50)}, ${c.war?.length ? 'berperang dengan ' + c.war.join(',') : 'damai'}${extra ? '; ' + extra : ''})`;
+const sayWhy = (t) => clip(t, 200);
+
+async function refine(inner, fwd, d, pre, uid) {
+  if (inner === 'propose_trade' && (d.status === 'active' || d.status === 'rejected')) {
+    const pr = await presOf(uid, fwd.session), to = String(fwd.to || '').toUpperCase(); if (!pr) return;
+    const offer = (await sb.from('cm_offers').select('id,status,sector,value,tariff_to,tariff_from,year').eq('from_c', pr.code).eq('to_c', to).eq('sector', fwd.sector).order('id', { ascending: false }).limit(1)).data?.[0], tr = (await sb.from('cm_countries').select('data').eq('code', to).single()).data?.data; if (!offer || !tr) return;
+    const rule = d.status === 'active', rel = tr.rel?.[pr.code] || 0, size = (+offer.value / Math.max(1, tr.gdp) * 100).toFixed(1);
+    const o = await llm(`Kamu menjadi presiden NPC yang menjawab tawaran dagang dari negara lain dalam game simulasi (data fiksi).\nKamu: ${dos(tr)}.\nPengusul: ${dos(pr.data)}.\nHubungan kamu dengan pengusul: ${rel} (skala -100..100)${shared(tr, pr.data) ? ', sesama anggota aliansi' : ''}.\nTawaran: ekspor sektor ${fwd.sector} senilai ${(+offer.value).toFixed(2)} miliar USD/tahun (${size}% dari PDB-mu), tarif impor yang dikenakan padamu ${offer.tariff_to}%, tarif yang kamu kenakan ${offer.tariff_from}%, tarif umummu ${tr.pol.tariff}%.\nModel aturan menyarankan: ${rule ? 'TERIMA' : 'TOLAK'}.\nPutuskan sesuai kepentinganmu dan wataknya (industri lokal, defisit/surplus, hubungan, aliansi, inflasi). Keluarkan JSON: {"accept":true|false,"why":"satu kalimat pernyataan resmi presiden, bahasa Indonesia, maks 180 karakter"}`);
+    if (typeof o?.accept !== 'boolean') return; const acc = o.accept, why = sayWhy(o.why);
+    if (acc !== rule) { if (acc) { const cnt = async (cd) => (await sb.from('cm_offers').select('id', { count: 'exact', head: true }).eq('status', 'active').eq('kind', 'trade').or(`from_c.eq.${cd},to_c.eq.${cd}`)).count || 0; if ((await cnt(pr.code)) >= 12 || (await cnt(to)) >= 12) return; }
+      await sb.from('cm_offers').update({ status: acc ? 'active' : 'rejected' }).eq('id', offer.id); const dl = acc ? 6 : -6; await cas(to, c => { c.rel = c.rel || {}; c.rel[pr.code] = clamp((c.rel[pr.code] || 0) + dl, -100, 100); }); await cas(pr.code, c => { c.rel = c.rel || {}; c.rel[to] = clamp((c.rel[to] || 0) + dl, -100, 100); }); }
+    await fixNews(to, /menerima tawaran dagang|menolak tawaran dagang/, `${tr.name} ${acc ? 'menerima' : 'menolak'} tawaran dagang dari ${pr.data.name}`, `${why}${acc ? ' Perjanjian mulai berlaku pada pergantian tahun.' : ''}`);
+    d.status = acc ? 'active' : 'rejected'; d.note = `${acc ? 'NPC menerima tawaran' : 'NPC menolak tawaran'}: ${why}`; return;
+  }
+  if (inner === 'propose_peace' && (d.status === 'accepted' || d.status === 'rejected')) {
+    const pr = await presOf(uid, fwd.session), t = String(fwd.target || '').toUpperCase(); if (!pr) return; const tr = (await sb.from('cm_countries').select('data').eq('code', t).single()).data?.data; if (!tr) return;
+    const rule = d.status === 'accepted';
+    const o = await llm(`Kamu menjadi presiden NPC yang menjawab usulan damai dari lawan perangmu dalam game simulasi (data fiksi).\nKamu: ${dos(tr)}.\nPengusul: ${dos(pr.data)}.\nPerang menggerus PDB ~3% per tahun dan stabilitas kedua pihak.\nModel aturan menyarankan: ${rule ? 'TERIMA' : 'TOLAK'}.\nPutuskan berdasarkan wataknya, kelelahan perang (kepuasan, stabilitas, ekonomi) dan kekuatan relatif. Keluarkan JSON: {"accept":true|false,"why":"satu kalimat pernyataan presiden, maks 180 karakter"}`);
+    if (typeof o?.accept !== 'boolean') return; const acc = o.accept, why = sayWhy(o.why);
+    if (acc !== rule) { if (acc) { await cas(pr.code, c => { c.war = (c.war || []).filter(x => x !== t); }); await cas(t, c => { c.war = (c.war || []).filter(x => x !== pr.code); }); } else { await cas(pr.code, c => { if (!c.war.includes(t)) c.war.push(t); }); await cas(t, c => { if (!c.war.includes(pr.code)) c.war.push(pr.code); }); } }
+    await fixNews(pr.code, /DAMAI|menolak usulan damai/, acc ? `DAMAI: ${pr.data.name} dan ${tr.name} sepakat gencatan senjata` : `${tr.name} menolak usulan damai ${pr.data.name}`, why);
+    d.status = acc ? 'accepted' : 'rejected'; d.note = `${acc ? 'Perdamaian tercapai' : 'NPC menolak perdamaian'}: ${why}`; return;
+  }
+  const taxKeys = ['taxInc', 'taxCorp'], isTax = inner === 'set_policy' && taxKeys.some(k => fwd.policy && k in fwd.policy);
+  if (d.vote && (isTax || inner === 'propose_law' || inner === 'repeal_law')) {
+    const pr = await presOf(uid, fwd.session); if (!pr) return; const c = pr.data, v = d.vote, rule = !!v.passed, parties = (c.gov.parties || []).map(x => x.name).slice(0, 5).join(', ') || 'partai-partai';
+    const desc = isTax ? `usulan perubahan pajak: penghasilan ${pre?.taxInc ?? '?'}% -> ${fwd.policy.taxInc ?? pre?.taxInc ?? '?'}%, korporasi ${pre?.taxCorp ?? '?'}% -> ${fwd.policy.taxCorp ?? pre?.taxCorp ?? '?'}%` : inner === 'propose_law' ? `RUU baru "${String(fwd.law).replace(/_/g, ' ')}"` : `usulan pencabutan UU "${String(fwd.law).replace(/_/g, ' ')}"`;
+    const o = await llm(`Kamu mensimulasikan sidang parlemen 100 kursi dalam game simulasi (data fiksi) untuk negara ${dos(c)}.\nPartai: ${parties}. Kursi koalisi pemerintah: ${v.coalition}. Ideologi negara: ${c.gov.ideology}, kepercayaan publik ${Math.round(c.gov.trust)}, korupsi ${Math.round(c.gov.corruption)}, utang ${(c.debt / Math.max(1, c.gdp) * 100).toFixed(0)}% PDB, kas ${c.treasury.toFixed(1)} M$.\nMosi: ${desc}.\nModel statistik memprediksi: setuju ${v.yes}, menolak ${v.no}, abstain ${v.abstain} (${rule ? 'LOLOS' : 'GAGAL'}).\nTentukan hasil akhir yang realistis (boleh menyimpang maksimal 20 suara dari prediksi, hanya bila ada alasan politik kuat) dan tulis 3 kutipan debat anggota parlemen dengan partai berbeda, bahasa Indonesia, maks 160 karakter per kutipan. yes+no+abstain harus 100.\nKeluarkan JSON: {"yes":int,"no":int,"abstain":int,"debate":[{"who":"Nama (Partai)","said":"..."}]}`);
+    if (!o || ![o.yes, o.no, o.abstain].every(Number.isInteger) || o.yes + o.no + o.abstain !== 100 || o.yes < 0 || o.no < 0 || o.abstain < 0 || Math.abs(o.yes - v.yes) > 20) return;
+    const passed = o.yes > 50, debate = (o.debate || []).slice(0, 3).map(x => ({ who: clip(x?.who, 60), said: clip(x?.said, 170) })).filter(x => x.who && x.said);
+    if (passed !== rule) {
+      if (isTax) { const tax = {}; for (const k of taxKeys) if (fwd.policy && k in fwd.policy) tax[k] = passed ? fwd.policy[k] : pre?.[k]; await cas(pr.code, cc => { for (const k in tax) if (tax[k] !== undefined) cc.pol[k] = tax[k]; }); }
+      else if (inner === 'propose_law') await cas(pr.code, cc => { cc.gov.laws = cc.gov.laws.filter(x => x !== fwd.law); if (passed) cc.gov.laws.push(fwd.law); });
+      else await cas(pr.code, cc => { if (passed) cc.gov.laws = cc.gov.laws.filter(x => x !== fwd.law); else if (!cc.gov.laws.includes(fwd.law)) cc.gov.laws.push(fwd.law); }); }
+    const head = debate[0] ? ` Debat: ${debate[0].who}: "${debate[0].said}"` : '';
+    await fixNews(pr.code, /pajak|RUU|Pencabutan/i, isTax ? `Parlemen ${passed ? 'setujui' : 'tolak'} usulan pajak ${c.name}` : inner === 'propose_law' ? `RUU "${String(fwd.law).replace(/_/g, ' ')}" di ${c.name}: ${passed ? 'DISAHKAN' : 'DITOLAK'}` : `Pencabutan "${String(fwd.law).replace(/_/g, ' ')}" di ${c.name}: ${passed ? 'DISETUJUI' : 'DITOLAK'}`, `Suara: ${o.yes} setuju, ${o.no} menolak, ${o.abstain} abstain.${head}`);
+    d.vote = { ...v, yes: o.yes, no: o.no, abstain: o.abstain, passed, debate }; if (isTax) d.note = passed ? 'Parlemen menyetujui perubahan pajak.' : 'Parlemen MENOLAK perubahan pajak; tarif lama tetap berlaku.'; }
+}
+async function proxy(tok, apikey, uid, body) {
+  const inner = String(body.inner || ''); if (!PROXIED.has(inner)) return { status: 404, json: { ok: false, error: 'Aksi tidak dikenal' } };
+  const fwd = { ...body, action: inner }; delete fwd.inner; let pre = null;
+  if (inner === 'set_policy' && fwd.policy) { const pr = await presOf(uid, fwd.session); if (pr) pre = { taxInc: pr.data.pol.taxInc, taxCorp: pr.data.pol.taxCorp }; }
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/cm-api`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}`, apikey: apikey || '' }, body: JSON.stringify(fwd) });
+  const j = await r.json().catch(() => null); if (!r.ok || !j?.ok) return { status: r.status || 502, json: j || { ok: false, error: 'Kesalahan server' } };
+  try { if (j.data) await refine(inner, fwd, j.data, pre, uid); } catch (e) { console.error('refine', e); }
+  return { status: 200, json: j };
+}
+
+// ---------- geopolitik NPC: perang & damai antar-NPC diputuskan Gemini (langka, maks 2 perang baru per tahun) ----------
+async function npcGeopolitics(npcs, year, news) {
+  const by = Object.fromEntries(npcs.map(r => [r.code, r])), R = rng('geo|' + year), out = { peace: 0, war: 0 };
+  const pairs = []; for (const r of npcs) for (const t of r.data.war || []) if (r.code < t && by[t]) pairs.push([r, by[t]]);
+  if (pairs.length) { const o = await llm(`Kamu menentukan apakah perang antar-negara NPC berakhir tahun ini dalam game simulasi (data fiksi). Perang menggerus PDB 3% per tahun. Pertimbangkan kelelahan perang (kepuasan, stabilitas, ekonomi), watak presiden, dan kekuatan relatif. Damai sebaiknya tidak terlalu cepat bila kedua presiden agresif dan masih kuat.\n${pairs.slice(0, 20).map(([a, b], i) => `${i + 1}. [${a.code}] ${dos(a.data)} vs [${b.code}] ${dos(b.data)}`).join('\n')}\nKeluarkan JSON: {"p":[{"a":"KODE","b":"KODE","peace":true|false,"why":"satu kalimat, maks 160 karakter"}]}`);
+    for (const x of o?.p || []) { const a = by[String(x?.a).toUpperCase()], b = by[String(x?.b).toUpperCase()]; if (!a || !b || x.peace !== true || !a.data.war.includes(b.code)) continue; await cas(a.code, c => { c.war = c.war.filter(y => y !== b.code); }); await cas(b.code, c => { c.war = c.war.filter(y => y !== a.code); }); out.peace++; news.push({ year, country: a.code, source: 'Kantor Berita Global', kind: 'konflik', title: `DAMAI: ${a.data.name} dan ${b.data.name} mengakhiri perang`, body: sayWhy(x.why) }); } }
+  const cand = []; for (const r of npcs) { const c = r.data; if ((c.ai?.tr.hawk ?? 0) < 0.68 || (c.gov.readiness ?? 0) < 45 || c.war?.length) continue; const nb = npcs.filter(b => b.code !== r.code && b.data.region === c.region && !b.data.war?.length && !shared(c, b.data) && (c.rel?.[b.code] || 0) <= 5).sort(() => R() - 0.5)[0]; if (nb) cand.push([r, nb]); }
+  const pick12 = cand.sort(() => R() - 0.5).slice(0, 12);
+  if (pick12.length) { const o = await llm(`Kamu menentukan apakah ada perang baru antar-negara NPC dalam game simulasi (data fiksi). Perang itu LANGKA dan merusak ekonomi; pilih paling banyak 2 perang dari kandidat di bawah, hanya bila ada alasan kuat (presiden agresif, kesiapan militer tinggi, kepuasan rakyat rendah sehingga butuh pengalihan isu, lawan lebih lemah, hubungan buruk). Boleh memilih nol.\n${pick12.map(([a, b], i) => `${i + 1}. penyerang [${a.code}] ${dos(a.data)} -> sasaran [${b.code}] ${dos(b.data)}; hubungan ${a.data.rel?.[b.code] || 0}`).join('\n')}\nKeluarkan JSON: {"w":[{"a":"KODE penyerang","b":"KODE sasaran","why":"alasan resmi satu kalimat, maks 160 karakter"}]}`);
+    for (const x of (o?.w || []).slice(0, 2)) { const a = by[String(x?.a).toUpperCase()], b = by[String(x?.b).toUpperCase()]; if (!a || !b || !pick12.some(([p, q]) => p.code === a.code && q.code === b.code) || a.data.war?.length) continue;
+      await cas(a.code, c => { if (!c.war.includes(b.code)) c.war.push(b.code); c.rel = c.rel || {}; c.rel[b.code] = -80; }); await cas(b.code, c => { if (!c.war.includes(a.code)) c.war.push(a.code); c.rel = c.rel || {}; c.rel[a.code] = -80; c.gov.readiness = clamp((c.gov.readiness ?? 50) + 5, 0, 100); });
+      await sb.from('cm_offers').update({ status: 'cancelled' }).eq('kind', 'trade').in('status', ['active', 'pending']).or(`and(from_c.eq.${a.code},to_c.eq.${b.code}),and(from_c.eq.${b.code},to_c.eq.${a.code})`); out.war++;
+      news.push({ year, country: a.code, source: 'Kantor Berita Global', kind: 'konflik', title: `PERANG: ${a.data.name} menyerang ${b.data.name}`, body: sayWhy(x.why) }); } }
+  return out;
+}
+
 async function run() {
   const w = (await sb.from('cm_world').select('year,npc_year').eq('id', 1).single()).data; if (!w || (w.npc_year ?? 0) >= w.year) return { skipped: true, year: w?.year };
   const lock = await sb.from('cm_world').update({ npc_year: w.year }).eq('id', 1).or(`npc_year.is.null,npc_year.lt.${w.year}`).select('id'); if (!lock.data?.length) return { skipped: true, year: w.year };
@@ -140,6 +218,7 @@ async function run() {
   for (const r of npcs) { const t = think(r.data, year, r.pc, plan[r.code]); r.t = t; if (t.by === 'gemini') aiN++; if (t.changed && t.acts.length) shifts.push(r); }
   let saved = 0; for (let i = 0; i < npcs.length; i += 25) { const res = await Promise.all(npcs.slice(i, i + 25).map(r => sb.from('cm_countries').update({ data: r.data, ver: r.ver + 1 }).eq('code', r.code).eq('ver', r.ver).is('president_uid', null).select('code'))); saved += res.filter(x => x.data?.length).length; }
   for (const r of shifts.sort((a, b) => b.data.gdp - a.data.gdp).slice(0, 6)) news.push({ year, country: r.code, source: 'Analisis Dunia', kind: 'politik', title: `${r.data.name} mengubah arah: fokus ${GOALS[r.t.goal].t}`, body: `${r.t.why ? '"' + r.t.why + '" — ' : ''}Presiden ${r.data.gov.president} ${r.t.acts.map(k => ACTS[k][3]).join(' dan ')}.${r.t.learned ? ` Evaluasi kebijakan tahun lalu: ${r.t.learned.reward >= 0 ? 'berhasil' : 'kurang berhasil'}, strategi disesuaikan.` : ''}` });
+  const geo = await npcGeopolitics(npcs, year, news).catch(e => { console.error('geo', e); return null; });
   // 2) diplomasi adaptif ke negara pemain
   const busy = new Set(offers.filter(o => o.status === 'pending' || o.status === 'active').map(o => [o.from_c, o.to_c].sort().join('|'))), ins = [];
   for (const p of players) { const ranked = npcs.map(r => [r, affinity(r.data, p.data) + R() * 12]).sort((a, b) => b[1] - a[1]);
@@ -158,7 +237,7 @@ async function run() {
   { const top = shifts.slice(0, 6), spin = await aiNewsSpin(top.map(r => ({ n: r.data.name, goal: GOALS[r.t.goal].t, acts: r.t.acts.map(k => ACTS[k][3]).join(', '), ok: r.t.learned ? (r.t.learned.reward >= 0 ? 'berhasil' : 'kurang berhasil') : 'belum ada' })));
     top.forEach((r, i) => { if (spin[i]) { const n = news.find(x => x.country === r.code && x.source === 'Analisis Dunia'); if (n) n.body = spin[i] + ' — ' + n.body; } }); }
   if (news.length) await sb.from('cm_news').insert(news);
-  return { ok: true, year, npcs: saved, ai: aiN, offers: ins.length, news: news.length };
+  return { ok: true, year, npcs: saved, ai: aiN, geo, offers: ins.length, news: news.length };
 }
 // balasan warga NPC langsung setelah pemain memposting (bukan menunggu pergantian tahun)
 async function react(uid, postId) {
@@ -175,6 +254,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try { const tok = (req.headers.get('Authorization') || '').replace('Bearer ', ''); const { data, error } = await sb.auth.getUser(tok); if (error || !data.user) return new Response(JSON.stringify({ ok: false, error: 'Silakan masuk terlebih dahulu' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } });
     const body = await req.json().catch(() => ({}));
+    if (body.action === 'proxy') { const px = await proxy(tok, req.headers.get('apikey'), data.user.id, body); return new Response(JSON.stringify(px.json), { status: px.status, headers: { ...CORS, 'Content-Type': 'application/json' } }); }
     if (body.action === 'react') return new Response(JSON.stringify({ ok: true, data: await react(data.user.id, Number(body.post_id)) }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     return new Response(JSON.stringify({ ok: true, data: await run() }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
   } catch (e) { console.error(e); return new Response(JSON.stringify({ ok: false, error: 'Kesalahan server: ' + (e?.message || e) }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } }); }
