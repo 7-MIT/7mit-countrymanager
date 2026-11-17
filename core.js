@@ -44,7 +44,7 @@ export function modal({ title, icon, body = '', actions = [], wide }) {
 export function closeModal() { const m = $('#modal'); m.classList.add('hidden'); m.innerHTML = ''; }
 
 // ---------- API ----------
-const EXTRA = new Set(['builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
+const EXTRA = new Set(['set_profile', 'builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
 export async function api(action, body = {}, { quiet = false, keepalive = false } = {}) {
   const { data: ses } = await sb.auth.getSession();
   const token = ses?.session?.access_token; if (!token) throw new Error('Sesi login berakhir. Silakan masuk lagi.');

@@ -5,6 +5,8 @@ import * as P from './pages.js';
 import { Globe } from './globe.js';
 import { Country3D, loadOutline } from './country3d.js';
 import { AREAS } from './areas.js';
+import { Region3D } from './region3d.js';
+import { showStart, stopStart, accountModal } from './start.js';
 
 const app = $('#app');
 const st = document.createElement('style'); st.textContent = '.osm-dark .leaflet-tile-pane{filter:invert(1) hue-rotate(185deg) brightness(.82) contrast(.92) saturate(.6)}'; document.head.appendChild(st);
@@ -28,7 +30,7 @@ function showGate(msg) {
 const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
 function shell() {
   app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : k === 'inbox' ? `<span class="dot hidden" data-rep></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
-   <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
+   <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="account">${ic('circle-user-round')} <span>Akun</span></button><button class="nav" data-act="toStart">${ic('house')} <span>Menu awal</span></button><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
    <div class="main"><div class="top"><button class="iconbtn menuBtn" data-act="menu" aria-label="Menu">${ic('menu')}</button>
     <div class="search">${ic('search')}<input id="gSearch" type="search" placeholder="Cari negara atau teritori…" autocomplete="off"><div class="sres hidden" id="sRes"></div></div>
     <span class="chip" id="roleChip"></span><div class="grow"></div>
@@ -138,7 +140,7 @@ function initMap() {
 }
 hooks.initMap = initMap;
 let LAND = null, landToken = 0;
-function destroyLand() { landToken++; if (LAND) { LAND.dispose(); LAND = null; } }
+function destroyLand() { closeCity(); landToken++; if (LAND) { LAND.dispose(); LAND = null; } }
 const LKINDS = [['rumah', 'house', 'Perumahan', 1.2], ['sekolah', 'school', 'Sekolah', 1.5], ['rs', 'hospital', 'Rumah Sakit', 2.2], ['pabrik', 'factory', 'Pabrik', 3], ['pertanian', 'wheat', 'Pertanian', 1], ['listrik', 'zap', 'Pembangkit', 3.5], ['pelabuhan', 'anchor', 'Pelabuhan', 5], ['bandara', 'plane', 'Bandara', 8], ['pasar', 'store', 'Pasar', .8], ['taman', 'trees', 'Taman', .5], ['teknologi', 'cpu', 'Pusat Teknologi', 4], ['kantor', 'landmark', 'Kantor Pemerintah', 1.8]];
 const ROADK = [['tol', 'route', 'Jalan Tol', .05], ['raya', 'signpost', 'Jalan Raya', .025], ['jalan', 'road', 'Jalan Kota', .012], ['rel', 'train-front', 'Rel Kereta', .08]];
 const isRoad = (k) => ROADK.some(x => x[0] === k);
@@ -152,14 +154,14 @@ function landHud() {
   const el = $('#landHud'); if (!el) return; const L = S.land, mine = S.me?.president === S.sel, cs = costScale(), km = roadKm(), counts = {}; L.builds.forEach(b => counts[b.kind] = (counts[b.kind] || 0) + 1);
   const tabs = (items, cur, act, key) => `<div class="tabs">${items.map(([v, t, i]) => `<button class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${i ? ic(i) + ' ' : ''}${t}</button>`).join('')}</div>`;
   el.innerHTML = `<div class="grid g2"><div class="card"><h3>${ic('hammer')} ${mine ? 'Bangun di Wilayah' : 'Pembangunan'}</h3>
-   ${mine ? `${tabs([['jelajah', 'Jelajah', 'mouse-pointer-2'], ['gedung', 'Bangun gedung', 'building-2'], ['jalan', 'Bangun jalan & rel', 'route']], L.mode, 'landSet')}<div class="sub" style="margin:10px 0 6px">Tingkat wilayah (garis batas pada peta)</div>${tabs(LLEVELS, L.level, 'landLevel')}` : `<div class="banner info">${ic('info')}<div>Hanya presiden negara ini yang dapat membangun. Anda dapat melihat semua proyek di peta.</div></div><div class="sub" style="margin-top:8px">Tingkat wilayah</div>${tabs(LLEVELS, L.level, 'landLevel')}`}
+   ${mine ? `${tabs([['jelajah', 'Jelajah', 'mouse-pointer-2'], ['gedung', 'Kota 3D (bangun)', 'building-2'], ['jalan', 'Bangun jalan & rel', 'route']], L.mode, 'landSet')}<div class="sub" style="margin:10px 0 6px">Tingkat wilayah (garis batas pada peta)</div>${tabs(LLEVELS, L.level, 'landLevel')}` : `<div class="banner info">${ic('info')}<div>Hanya presiden negara ini yang dapat membangun. Anda dapat melihat semua proyek di peta.</div></div><div class="sub" style="margin-top:8px">Tingkat wilayah</div>${tabs(LLEVELS, L.level, 'landLevel')}`}
    <div class="item" style="margin-top:12px"><div class="sub">${ic('map-pin')} Wilayah</div><b id="landInfo">Arahkan kursor ke daratan…</b></div>
    ${mine && L.mode === 'gedung' ? `<div class="sub" style="margin:12px 0 6px">Pilih jenis bangunan lalu klik daratan di peta (biaya dalam miliar USD)</div><div class="bgrid">${LKINDS.map(([k, i, n, b]) => `<button class="${L.kind === k ? 'sel' : ''}" data-act="landKind" data-v="${k}">${ic(i)}<br>${n}<br><small>${usd(b * cs)}</small></button>`).join('')}</div>` : ''}
    ${mine && L.mode === 'jalan' ? `<div class="item" style="margin-top:12px"><b>Bangun jalur</b><div class="bgrid" style="margin:8px 0">${ROADK.map(([k, i, n, c]) => `<button class="${L.road === k ? 'sel' : ''}" data-act="roadKind" data-v="${k}">${ic(i)}<br>${n}<br><small>${usd(c * cs)}/km</small></button>`).join('')}</div><div class="sub">Klik titik-titik di peta untuk membuat rute. Titik: ${L.pts.length} · Panjang ±${fmt(km, 1)} km · Biaya ±${usd(ROADK.find(x => x[0] === L.road)[3] * km * cs)}</div><div class="row wrap" style="margin-top:8px"><button class="btn sm pri" data-act="roadDone" ${L.pts.length < 2 ? 'disabled' : ''}>${ic('check')} Selesai & bangun</button><button class="btn sm" data-act="roadUndo" ${L.pts.length ? '' : 'disabled'}>${ic('undo-2')} Hapus titik</button><button class="btn sm red" data-act="roadCancel">${ic('x')} Batal</button></div></div>` : ''}
   </div><div class="card"><h3>${ic('list')} Proyek ${esc(cty(S.sel)?.name || '')} (${L.builds.length})</h3>${L.builds.length ? `<div class="scroll" style="max-height:300px"><div class="stack">${[...L.builds].reverse().slice(0, 60).map(b => { const k = LKINDS.find(x => x[0] === b.kind); const rd = ROADK.find(x => x[0] === b.kind); return `<div class="item row between wrap"><div>${ic(rd ? rd[1] : (k?.[1] || 'building'))} <b>${rd ? `${rd[2]} ${b.km} km` : esc(k?.[2] || b.kind)}</b><div class="sub">${esc(Object.values(b.region || {}).reverse().join(', ') || 'Wilayah tak tercatat')} · ${usd(+b.cost)} · tahun ${b.year}</div></div>${mine ? `<button class="btn sm red" data-act="buildDel" data-id="${b.id}">${ic('trash-2')}</button>` : ''}</div>`; }).join('')}</div></div>` : `<div class="empty">${ic('hammer')}<div>Belum ada proyek.${mine ? ' Mulai bangun jalan atau gedung!' : ''}</div></div>`}</div></div>`;
   refreshIcons();
 }
-async function reloadBuilds(first) { if (S.page !== 'land') return; try { const r = await api('builds', { country: S.sel }, { quiet: true }); S.land.builds = r.builds; LAND?.setBuilds(r.builds, !!first); landHud(); } catch (e) {} }
+async function reloadBuilds(first) { if (S.page !== 'land') return; try { const r = await api('builds', { country: S.sel }, { quiet: true }); S.land.builds = r.builds; LAND?.setBuilds(r.builds, !!first); landHud(); refreshCity(); } catch (e) {} }
 async function loadRegions(level) {
   const L = S.land; if (!LAND) return; if (L.regs[level]) { LAND.setRegions(L.regs[level]); return; }
   if (level === 'zona') { L.regs.zona = LAND.gridRegions(); LAND.setRegions(L.regs.zona); return; }
@@ -170,19 +172,61 @@ async function loadRegions(level) {
     if (token !== landToken) return; const gj = JSON.parse(txt), shift = LAND.outline.shifted, feats = [];
     for (const f of gj.features) { const g = f.geometry; const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates; const rings = polys.map(p => { let r = p[0]; const step = Math.max(1, Math.floor(r.length / 400)); r = r.filter((_, i) => i % step === 0); return shift ? r.map(q => [q[0] < 0 ? q[0] + 360 : q[0], q[1]]) : r; }); let bb = [1e9, 1e9, -1e9, -1e9]; rings.forEach(r => r.forEach(q => { bb = [Math.min(bb[0], q[0]), Math.min(bb[1], q[1]), Math.max(bb[2], q[0]), Math.max(bb[3], q[1])]; })); feats.push({ name: f.properties.shapeName || f.properties.name || 'Wilayah', bb, rings }); }
     if (!feats.length) throw new Error('kosong'); L.regs[level] = feats; LAND.setRegions(feats);
-  } catch (e) { toast('Batas wilayah tingkat ini tidak tersedia, memakai zona', 'warn'); L.level = 'zona'; await loadRegions('zona'); landHud(); }
+  } catch (e) { L.level = 'zona'; await loadRegions('zona'); landHud(); }
+}
+// ---- nama wilayah asli (Nominatim / OpenStreetMap), di-cache dan dibatasi 1 permintaan/detik ----
+const geoCache = new Map(); let geoChain = Promise.resolve(), geoLast = 0;
+function geoName(lat, lon) {
+  const key = lat.toFixed(2) + ',' + lon.toFixed(2); if (geoCache.has(key)) return Promise.resolve(geoCache.get(key));
+  const job = geoChain.then(async () => { if (geoCache.has(key)) return geoCache.get(key); const w = 1100 - (Date.now() - geoLast); if (w > 0) await new Promise(r => setTimeout(r, w)); geoLast = Date.now(); let o = {};
+    try { const j = await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&addressdetails=1&accept-language=id&lat=${lat}&lon=${lon}`)).json(), a = j.address || {};
+      const a1 = a.state || a.province || a.region || a.state_district || a.island || '', a2 = a.county || a.city || a.municipality || a.regency || a.town || a.state_district || '', a3 = a.city_district || a.suburb || a.village || a.hamlet || a.town || a.neighbourhood || '';
+      if (a1) o.adm1 = a1; if (a2 && a2 !== a1) o.adm2 = a2; if (a3 && a3 !== a2 && a3 !== a1) o.adm3 = a3; if (!o.adm1 && a.country) o.adm1 = a.country; } catch (e) {}
+    if (Object.keys(o).length) geoCache.set(key, o); return o; });
+  geoChain = job.catch(() => {}); return job;
+}
+const nameLabel = (n) => [n.adm3, n.adm2, n.adm1, n.zona].filter(Boolean).join(', ');
+async function namesAt(pt) { const g = await geoName(pt.lat, pt.lon), z = regNames(pt); return Object.keys(g).length ? g : (z.zona ? { zona: z.zona } : z); }
+let hoverTok = 0; function hoverName(pt) { const my = ++hoverTok, el = $('#landInfo'); setTimeout(async () => { if (my !== hoverTok) return; const n = await namesAt(pt); const e = $('#landInfo'); if (my === hoverTok && e) e.textContent = nameLabel(n) || 'Wilayah belum dikenali'; }, 450); }
+
+// ---- Kota 3D (tampilan bangun ala /classic) ----
+let CITY = null, CITYCTX = null;
+const cityBuilds = () => S.land.builds.filter(b => b.region?.c === CITYCTX?.c);
+function closeCity() { if (CITY) { CITY.dispose(); CITY = null; } CITYCTX = null; $('#cityov')?.remove(); }
+function refreshCity() { if (!CITY) return; const bs = cityBuilds(); CITY.setPlots(bs.filter(b => !b.path)); CITY.setRoads(bs.filter(b => b.path)); cityHud(); }
+function cityHud() {
+  const el = $('#cityHud'); if (!el || !CITYCTX) return; const L = S.land, mine = S.me?.president === S.sel, cs = costScale(), cx = CITYCTX, n = cx.pts.length; let km = 0; for (let i = 1; i < n; i++) km += Math.hypot(cx.pts[i][0] - cx.pts[i - 1][0], cx.pts[i][1] - cx.pts[i - 1][1]) * 0.5;
+  el.innerHTML = mine ? `<div class="tabs"><button class="${cx.mode === 'plot' ? 'on' : ''}" data-act="cityMode" data-v="plot">${ic('building-2')} Bangun gedung</button><button class="${cx.mode === 'road' ? 'on' : ''}" data-act="cityMode" data-v="road">${ic('route')} Jalan & rel</button></div>
+   ${cx.mode === 'plot' ? `<div class="sub" style="margin:8px 0 4px">Pilih jenis lalu klik petak kosong (klik petak terisi untuk membongkar)</div><div class="bgrid">${LKINDS.map(([k, i, nm, b]) => `<button class="${L.kind === k ? 'sel' : ''}" data-act="landKind" data-v="${k}">${ic(i)}<br>${nm}<br><small>${usd(b * cs)}</small></button>`).join('')}</div>`
+    : `<div class="bgrid" style="margin:8px 0">${ROADK.map(([k, i, nm, c]) => `<button class="${L.road === k ? 'sel' : ''}" data-act="roadKind" data-v="${k}">${ic(i)}<br>${nm}<br><small>${usd(c * cs)}/km</small></button>`).join('')}</div><div class="sub">Klik persimpangan untuk membuat jalur. Titik: ${n} · ±${fmt(km, 2)} km · Biaya ±${usd(ROADK.find(x => x[0] === L.road)[3] * km * cs)}</div><div class="row wrap" style="margin-top:8px"><button class="btn sm pri" data-act="cityRoadDone" ${n < 2 ? 'disabled' : ''}>${ic('check')} Bangun jalur</button><button class="btn sm" data-act="cityRoadUndo" ${n ? '' : 'disabled'}>${ic('undo-2')} Hapus titik</button></div>`}`
+   : `<div class="banner info">${ic('info')}<div>Anda melihat kota ini. Hanya presiden negara ini yang dapat membangun.</div></div>`;
+  refreshIcons();
+}
+async function openCity(pt) {
+  closeCity(); const names = await namesAt(pt), q = 0.03, lat = Math.round(pt.lat / q) * q, lng = Math.round(pt.lon / q) * q, c = `${Math.round(pt.lat / q)},${Math.round(pt.lon / q)}`;
+  CITYCTX = { lat: +lat.toFixed(4), lng: +lng.toFixed(4), c, names, mode: 'plot', pts: [] };
+  const ov = document.createElement('div'); ov.id = 'cityov'; ov.className = 'cityov'; ov.innerHTML = `<div class="cityhd"><b>${ic('building-2')} Kota 3D — ${esc(nameLabel(names) || 'Wilayah')}</b><span class="sub">1 petak ≈ 0,4 km · seret untuk memutar, gulir untuk zoom</span><div class="grow"></div><button class="btn sm" data-act="cityClose">${ic('x')} Tutup</button></div><div id="cityGL" class="citygl"></div><div id="cityHud" class="cityhud"></div>`; document.body.appendChild(ov);
+  try { CITY = new Region3D($('#cityGL'), { lat: CITYCTX.lat, lng: CITYCTX.lng, onPlot: cityPlot, onNode: (x, z) => { CITYCTX.pts.push([x, z]); CITY.setPreview(CITYCTX.pts, S.land.road); cityHud(); } }); } catch (e) { toast('WebGL tidak tersedia untuk Kota 3D', 'warn'); closeCity(); return; }
+  refreshCity();
+}
+function cityRegion(i, j) { return { ...CITYCTX.names, c: CITYCTX.c, ...(i === undefined ? {} : { plot: i + ',' + j }) }; }
+function cityPlot(i, j) {
+  const mine = S.me?.president === S.sel, L = S.land; if (!mine) { toast('Hanya presiden negara ini yang dapat membangun', 'warn'); return; }
+  const ex = cityBuilds().find(b => b.region?.plot === i + ',' + j && !b.path);
+  if (ex) { const k = LKINDS.find(x => x[0] === ex.kind); modal({ title: `${k?.[2] || ex.kind} di petak ${i + 1},${j + 1}`, icon: k?.[1] || 'building', body: `<p>Dibangun tahun ${ex.year}. Membongkar mengembalikan 40% biaya (${usd(+ex.cost * .4)}).</p>`, actions: [{ label: 'Bongkar', icon: 'trash-2', cls: 'red', fn: () => act(null, 'build_remove', { id: ex.id }, 'Bangunan dibongkar', async () => { await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }) }, { label: 'Batal' }] }); return; }
+  const k = LKINDS.find(x => x[0] === L.kind), cost = k[3] * costScale(), [la, lo] = CITY.toLL(i + .5, j + .5);
+  modal({ title: `Bangun ${k[2]}?`, icon: k[1], body: `<p>Lokasi: <b>${esc(nameLabel(CITYCTX.names))}</b>, petak ${i + 1},${j + 1}</p><div class="item">Biaya <b>${usd(cost)}</b> dari kas ${usd(S.M?.country?.treasury || 0)}.</div>`, actions: [{ label: 'Bangun', icon: 'hammer', cls: 'pri', fn: () => act(null, 'build_place', { kind: L.kind, lat: la, lng: lo, region: cityRegion(i, j) }, (r) => `${k[2]} dibangun (${usd(r.cost)})`, async () => { await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }) }, { label: 'Batal' }] });
 }
 function landClick(pt) {
-  const L = S.land, mine = S.me?.president === S.sel, rn = regNames(pt), label = Object.values(rn).reverse().join(', ') || 'Wilayah';
+  const L = S.land, mine = S.me?.president === S.sel;
   if (L.mode === 'jalan' && mine) { L.pts.push([+pt.lat.toFixed(4), +pt.lon.toFixed(4)]); LAND.setPreview(L.pts); landHud(); return; }
-  if (L.mode === 'gedung' && mine) { const k = LKINDS.find(x => x[0] === L.kind), cost = k[3] * costScale(); modal({ title: `Bangun ${k[2]}?`, icon: k[1], body: `<p>Lokasi: <b>${esc(label)}</b></p><div class="item">Biaya <b>${usd(cost)}</b> dari kas ${usd(S.M?.country?.treasury || 0)}. Dampak langsung diterapkan ke indikator negara.</div>`, actions: [{ label: 'Bangun', icon: 'hammer', cls: 'pri', fn: () => act(null, 'build_place', { kind: L.kind, lat: pt.lat, lng: pt.lon, region: rn }, (r) => `${k[2]} dibangun (${usd(r.cost)})`, async () => { await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }) }, { label: 'Batal' }] }); return; }
-  const el = $('#landInfo'); if (el) el.textContent = label;
+  const el = $('#landInfo'); if (el) el.textContent = 'Memuat nama wilayah…'; openCity(pt).then(() => { const e = $('#landInfo'); if (e && CITYCTX) e.textContent = nameLabel(CITYCTX.names); });
 }
 hooks.initLand = async () => {
   destroyLand(); const my = ++landToken, el = $('#land'), c = cty(S.sel); if (!el || !c) return; const msg = $('#landMsg');
   try {
     const outline = await loadOutline(c.code); if (my !== landToken) return;
-    LAND = new Country3D(el, { code: c.code, name: c.name, lat: c.lat, lng: c.lng, outline, mode: S.landMode || '3d', mapbox: S.world.mapbox, onStatus: (t) => { if (msg) { msg.innerHTML = t ? `${ic('loader-circle', 'spin')} ${t}` : ''; msg.style.display = t ? '' : 'none'; refreshIcons(); } } }); LAND.pop = c.pop; S.land.pts = []; S.land.builds = []; S.land.regs = {}; LAND.onClick = landClick; LAND.onHover = (pt, e) => { const el = $('#landInfo'); if (!el) return; if (!pt) { el.textContent = 'Arahkan kursor ke daratan…'; return; } const rn = regNames(pt); el.textContent = Object.values(rn).reverse().join(', ') || 'Wilayah'; }; landHud(); loadRegions(S.land.level); reloadBuilds(true);
+    LAND = new Country3D(el, { code: c.code, name: c.name, lat: c.lat, lng: c.lng, outline, mode: S.landMode || '3d', mapbox: S.world.mapbox, onStatus: (t) => { if (msg) { msg.innerHTML = t ? `${ic('loader-circle', 'spin')} ${t}` : ''; msg.style.display = t ? '' : 'none'; refreshIcons(); } } }); LAND.pop = c.pop; S.land.pts = []; S.land.builds = []; S.land.regs = {}; LAND.onClick = landClick; LAND.onHover = (pt, e) => { const el = $('#landInfo'); if (!el) return; if (!pt) { hoverTok++; el.textContent = 'Arahkan kursor ke daratan…'; return; } hoverName(pt); }; landHud(); loadRegions(S.land.level); reloadBuilds(true);
     const sc = $('#landScale'); if (sc) sc.innerHTML = `${ic('ruler')} Bentang ±${fmt(LAND.widthKm)} × ${fmt(LAND.heightKm)} km · 1 satuan = 100 km`; refreshIcons(); if (msg && (S.landMode || '3d') === '3d') msg.style.display = 'none';
   } catch (e) { if (msg) msg.innerHTML = `${ic('circle-alert')} ${esc(e.message || 'Gagal memuat wilayah')}`; refreshIcons(); }
 };
@@ -216,8 +260,8 @@ const val = (id) => $('#' + id)?.value;
 const A = {
   landSet: (el) => { S.land.mode = el.dataset.v; S.land.pts = []; LAND?.setPreview([]); landHud(); },
   landLevel: (el) => { S.land.level = el.dataset.v; landHud(); loadRegions(S.land.level); },
-  landKind: (el) => { S.land.kind = el.dataset.v; S.land.mode = 'gedung'; landHud(); },
-  roadKind: (el) => { S.land.road = el.dataset.v; landHud(); },
+  landKind: (el) => { S.land.kind = el.dataset.v; if (!CITY) S.land.mode = 'gedung'; landHud(); cityHud(); },
+  roadKind: (el) => { S.land.road = el.dataset.v; landHud(); if (CITY) { CITY.setPreview(CITYCTX.pts, S.land.road); cityHud(); } },
   roadUndo: () => { S.land.pts.pop(); LAND?.setPreview(S.land.pts); landHud(); },
   roadCancel: () => { S.land.pts = []; LAND?.setPreview([]); S.land.mode = 'jelajah'; landHud(); },
   roadDone: (el) => act(el, 'road_place', { kind: S.land.road, points: S.land.pts, region: (() => { const f = S.land.pts[0]; return f ? regNames({ lat: f[0], lon: f[1] }) : {}; })() }, (r) => `${ROADK.find(x => x[0] === S.land.road)[2]} ${r.km} km dibangun (${usd(r.cost)})`, async () => { S.land.pts = []; LAND?.setPreview([]); await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }),
@@ -225,6 +269,12 @@ const A = {
   landMode: (el) => { S.landMode = el.dataset.v; if (LAND) { const m = $('#landMsg'); if (m) { m.style.display = ''; } LAND.setMode(S.landMode); setTimeout(() => { loadRegions(S.land.level); reloadBuilds(true); }, 600); $$('[data-act=landMode]').forEach(b => b.classList.toggle('on', b.dataset.v === S.landMode)); } else render(); },
   mapMode: (el) => { S.mapMode = el.dataset.v; destroyMap(); render(); },
   menu: () => $('#side').classList.toggle('open'),
+  cityClose: () => closeCity(),
+  cityMode: (el) => { if (!CITY) return; CITYCTX.mode = el.dataset.v; CITYCTX.pts = []; CITY.setMode(CITYCTX.mode === 'road' ? 'road' : 'plot'); CITY.setPreview([], S.land.road); cityHud(); },
+  cityRoadUndo: () => { CITYCTX.pts.pop(); CITY.setPreview(CITYCTX.pts, S.land.road); cityHud(); },
+  cityRoadDone: (el) => { const pts = CITYCTX.pts.map(([x, z]) => CITY.toLL(x, z)); act(el, 'road_place', { kind: S.land.road, points: pts, region: cityRegion() }, (r) => `Jalur ${r.km} km dibangun (${usd(r.cost)})`, async () => { CITYCTX.pts = []; CITY.setPreview([], S.land.road); await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }); },
+  account: () => accountModal(startHooks),
+  toStart: () => startHooks.start(),
   logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
   help: () => tutorial(0),
   pick: (el) => { const keep = S.page; pick(el.dataset.code); if (keep === 'leader' || keep === 'dash') go('dash'); },
@@ -350,15 +400,21 @@ function releaseBeacon() { if (!S.me?.president || !S.token) return; try { fetch
 addEventListener('pagehide', releaseBeacon);
 
 // ================= BOOT =================
-let booted = false;
+let booted = false, running = false;
+const startHooks = {
+  refresh: async () => { await sync(true); await Promise.all([loadMine(true), loadSel(true)]); },
+  start: () => { destroyMap(); destroyLand(); S.inStart = true; showStart(app, startHooks); },
+  enter: () => { stopStart(); S.inStart = false; S.page = S.page === 'land' ? 'land' : (S.me?.president ? 'dash' : S.page || 'dash'); shell(); render(); loadSel(true); loadMine(true); let seen = false; try { seen = !!localStorage.getItem('cm_tut'); } catch (e) {} if (!seen) setTimeout(() => tutorial(0), 600); },
+  logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
+};
 async function boot(session) {
   if (booted) return; booted = true; S.token = session.access_token; S.user = session.user;
   app.innerHTML = `<div class="gate"><div class="box"><div class="skeleton" style="height:120px"></div><p class="sub" style="margin-top:14px">${ic('loader-circle', 'spin')} Memuat dunia…</p></div></div>`; refreshIcons();
   try { await sync(true); } catch (e) {}
   if (!S.me) { booted = false; showGate('Tidak dapat memuat dunia. Pastikan koneksi dan coba lagi.'); return; }
-  shell(); render(); subscribeRealtime(); setInterval(() => sync(), 5000); setInterval(() => { updateAdv(); updateConn(); tickTop(); tickClock(); }, 1000); setInterval(() => { loadSel(); loadMine(); }, 10000);
-  let seen = false; try { seen = !!localStorage.getItem('cm_tut'); } catch (e) {} if (!seen) setTimeout(() => tutorial(0), 600);
+  if (!running) { running = true; subscribeRealtime(); setInterval(() => sync(), 5000); setInterval(() => { updateAdv(); updateConn(); tickTop(); tickClock(); }, 1000); setInterval(() => { loadSel(); loadMine(); }, 10000); }
+  startHooks.start();
 }
 sb.auth.onAuthStateChange((ev, session) => { if (session) S.token = session.access_token; if (ev === 'SIGNED_OUT') { booted = false; showGate(); } if ((ev === 'SIGNED_IN' || ev === 'INITIAL_SESSION') && session && !booted) boot(session); });
 (async () => { const { data } = await sb.auth.getSession(); if (!data.session) showGate(); else boot(data.session); })();
-window.__cm = { S, sync, go, pick, render, get land() { return LAND; } };
+window.__cm = { S, sync, go, pick, render, get land() { return LAND; }, get city() { return CITY; } };
