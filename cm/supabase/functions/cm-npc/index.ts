@@ -25,25 +25,30 @@ const GOALS = {
 };
 const metrics = (c) => ({ ap: c.gov.approval, gr: c.growth, inf: c.infl, un: c.unemp, bal: (c.lastBalance || 0) / Math.max(1, c.gdp) * 100, debt: c.debt / Math.max(1, c.gdp) });
 
-function think(c, year) {
-  const R = rng(c.code + '|ai|' + year), T = rng(c.code + '|traits'), p = c.pol, g = c.gov;
+function prepare(c, year) { // belajar dari hasil tahun lalu, hitung tekanan masalah & kandidat kebijakan (aturan)
+  const R = rng(c.code + '|ai|' + year), T = rng(c.code + '|traits'), p = c.pol;
   const ai = c.ai || (c.ai = { tr: { hawk: T(), pop: T(), lib: T(), caut: T() }, w: {}, last: null, goal: null, hist: [] });
   const m = metrics(c); let learned = null;
   if (ai.last) { const l = ai.last.m, reward = clamp((m.ap - l.ap) * 0.6 + (m.gr - l.gr) * 2 - (m.inf - l.inf) - (m.un - l.un) * 1.5 + (m.bal - l.bal) * 0.8, -4, 4);
     for (const k of ai.last.acts) ai.w[k] = r1(clamp((ai.w[k] || 0) * 0.9 + 0.25 * reward, -3, 3) * 10) / 10; learned = { reward: r1(reward), acts: ai.last.acts }; }
   const pr = { inflasi: Math.max(0, m.inf - 6) * 1.2, defisit: Math.max(0, -m.bal - 2) * 1.5 + Math.max(0, m.debt - 0.9) * 6, kerja: Math.max(0, m.un - 8) * 1.1, rakyat: Math.max(0, 48 - m.ap) * 0.5 * (1 + ai.tr.pop), tumbuh: Math.max(0, 2 - m.gr) * 1.5, perang: (c.war?.length || 0) * 5 * (0.5 + ai.tr.hawk), stabil: 1.2 };
   if (ai.goal && pr[ai.goal] !== undefined) pr[ai.goal] += 1;                                   // konsisten, tidak plin-plan
-  const goal = Object.entries(pr).sort((a, b) => b[1] - a[1])[0][0], changed = goal !== ai.goal;
-  const canSpend = m.bal > -4 && c.treasury > -c.gdp * 0.02;
+  const canSpend = m.bal > -4 && c.treasury > -c.gdp * 0.02, allowed = (k) => { const [f, d, cost] = ACTS[k]; if (cost && !canSpend) return false; const v = p[f] + d; return v >= LIM[f][0] && v <= LIM[f][1]; };
+  return { R, ai, m, learned, pr, canSpend, allowed };
+}
+function ruleGoal(c, pc) { const { R, ai, m, pr, allowed } = pc, p = c.pol, goal = Object.entries(pr).sort((a, b) => b[1] - a[1])[0][0];
   const bias = (k) => (k.startsWith('tariff-') || k === 'corp-' ? ai.tr.lib - 0.5 : 0) + (k === 'welfare+' || k === 'tax-' ? ai.tr.pop - 0.5 : 0) + (k === 'def+' ? ai.tr.hawk - 0.5 : 0);
-  const cand = GOALS[goal].a.filter(k => { const [f, d, cost] = ACTS[k]; if (cost && !canSpend) return false; const v = p[f] + d; return v >= LIM[f][0] && v <= LIM[f][1]; })
-    .map(k => [k, 1 + (ai.w[k] || 0) + bias(k) + R() * (1 - ai.tr.caut) * 1.2 + (R() < 0.12 ? 1.5 : 0)]).sort((a, b) => b[1] - a[1]);   // 12% eksplorasi
-  const n = pr[goal] > 6 && ai.tr.caut < 0.7 ? 2 : 1, acts = cand.filter(x => x[1] > -0.5).slice(0, n).map(x => x[0]);
-  for (const k of acts) { const [f, d] = ACTS[k]; p[f] = r1(clamp(p[f] + d, LIM[f][0], LIM[f][1])); }
+  const cand = GOALS[goal].a.filter(allowed).map(k => [k, 1 + (ai.w[k] || 0) + bias(k) + R() * (1 - ai.tr.caut) * 1.2 + (R() < 0.12 ? 1.5 : 0)]).sort((a, b) => b[1] - a[1]);   // 12% eksplorasi
+  const n = pr[goal] > 6 && ai.tr.caut < 0.7 ? 2 : 1; return { goal, acts: cand.filter(x => x[1] > -0.5).slice(0, n).map(x => x[0]) }; }
+function think(c, year, pc, plan) { // plan (dari Gemini) menggantikan keputusan aturan bila valid
+  const { R, ai, m, learned, allowed } = pc, p = c.pol, g = c.gov; let d = ruleGoal(c, pc), by = 'aturan';
+  if (plan && GOALS[plan.goal]) { const acts = [...new Set((plan.acts || []).filter(k => ACTS[k] && allowed(k)))].slice(0, 3); if (acts.length) { d = { goal: plan.goal, acts }; by = 'gemini'; } }
+  const goal = d.goal, acts = d.acts, changed = goal !== ai.goal;
+  for (const k of acts) { const [f, dl] = ACTS[k]; p[f] = r1(clamp(p[f] + dl, LIM[f][0], LIM[f][1])); }
   if (g.corruption > 60 && !g.laws.includes('uu_kpk') && R() < 0.5) g.laws.push('uu_kpk');
-  ai.goal = goal; ai.last = { m, acts, year }; ai.hist = [...(ai.hist || []), { y: year, g: goal, a: acts }].slice(-6);
+  ai.goal = goal; ai.last = { m, acts, year }; ai.why = by === 'gemini' ? clip(plan.why, 240) : ''; ai.hist = [...(ai.hist || []), { y: year, g: goal, a: acts, by }].slice(-6);
   for (const k of Object.keys(c.rel || {})) c.rel[k] = Math.round(c.rel[k] * 0.97);                // dendam & budi memudar
-  return { goal, changed, acts, learned };
+  return { goal, changed, acts, learned, by, why: ai.why };
 }
 const affinity = (n, p) => (n.rel?.[p.code] || 0) + (n.mem?.some(a => a !== 'UN' && p.mem?.includes(a)) ? 25 : 0) + (n.region === p.region ? 10 : 0) - (n.war?.includes(p.code) ? 200 : 0);
 
@@ -103,6 +108,18 @@ async function aiNewsSpin(items) { // items: [{n,goal,acts,ok}] -> tajuk analisi
   const r = {}; (o?.a || []).forEach((t, i) => { if (t) r[i] = clip(t, 220); }); return r;
 }
 
+
+// ---------- presiden NPC berpikir dengan Gemini: memilih tujuan & kebijakan dari keadaan, ingatan, dan pelajaran sebelumnya ----------
+const ACT_LIST = Object.entries(ACTS).map(([k, v]) => `${k} (${v[3]})`).join('; '), GOAL_LIST = Object.entries(GOALS).map(([k, v]) => `${k} (${v.t})`).join('; ');
+function dossier(r, pc, playerRel) { const c = r.data, p = c.pol, ai = pc.ai, m = pc.m, w = Object.entries(ai.w).filter(([, v]) => Math.abs(v) >= 0.3).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 5).map(([k, v]) => `${k}:${v > 0 ? '+' : ''}${v}`).join(',');
+  return `[${c.code}] ${c.name}, presiden ${c.gov.president}, watak(agresif ${ai.tr.hawk.toFixed(1)}, populis ${ai.tr.pop.toFixed(1)}, liberal ${ai.tr.lib.toFixed(1)}, hati-hati ${ai.tr.caut.toFixed(1)}). PDB ${c.gdp.toFixed(1)} M$, tumbuh ${m.gr.toFixed(1)}%, inflasi ${m.inf.toFixed(1)}%, pengangguran ${m.un.toFixed(1)}%, kepuasan ${Math.round(m.ap)}%, saldo anggaran ${m.bal.toFixed(1)}% PDB, utang ${(m.debt * 100).toFixed(0)}% PDB, korupsi ${Math.round(c.gov.corruption)}, perang dengan ${c.war?.length || 0} negara. Kebijakan: bunga ${p.rate}, pajak ${p.taxInc}/${p.taxCorp}, belanja ${p.spend}, tarif ${p.tariff}, pertahanan ${p.defense}. Tujuan lalu: ${ai.goal || '-'}; langkah lalu: ${(ai.last?.acts || []).join(',') || '-'}; hasilnya ${pc.learned ? (pc.learned.reward >= 0 ? 'baik' : 'buruk') + ' (' + pc.learned.reward + ')' : 'belum ada'}; bobot belajar: ${w || '-'}.${playerRel ? ` Hubungan dengan pemain: ${playerRel}.` : ''} Opsi aturan menyarankan: ${ruleGoal(c, pc).goal}.`; }
+async function aiPresidents(batch) { // batch: [{r, pc}] -> {code: {goal, acts, why}}
+  if (!batch.length) return {};
+  const rows = batch.map(({ r, pc, rel }) => dossier(r, pc, rel)).join('\n');
+  const o = await llm(`Kamu otak strategis para presiden NPC dalam game simulasi negara (data fiksi). Untuk setiap negara pilih SATU tujuan utama tahun ini dan 1-3 langkah kebijakan yang paling masuk akal, sesuai watak presidennya dan pelajaran dari hasil langkah sebelumnya (jangan mengulang langkah yang hasilnya buruk; ulangi yang berhasil bila masalah masih ada; hindari plin-plan tanpa alasan). Pertimbangkan trade-off: menaikkan belanja memperlebar defisit, memangkas belanja menurunkan kepuasan, dst.\nTujuan yang boleh: ${GOAL_LIST}.\nLangkah yang boleh (pakai kuncinya persis): ${ACT_LIST}.\nTulis "why" satu kalimat bahasa Indonesia ala juru bicara kepresidenan (maks 200 karakter) yang menjelaskan alasan memakai angka negaranya.\nNegara:\n${rows}\nKeluarkan JSON: {"d":[{"c":"KODE","goal":"...","a":["kunci","kunci"],"why":"..."}]}`, 60000);
+  const out = {}; for (const x of o?.d || []) if (x?.c && GOALS[x.goal] && Array.isArray(x.a)) out[String(x.c).toUpperCase()] = { goal: x.goal, acts: x.a.map(String), why: clip(x.why, 240) }; return out;
+}
+
 async function run() {
   const w = (await sb.from('cm_world').select('year,npc_year').eq('id', 1).single()).data; if (!w || (w.npc_year ?? 0) >= w.year) return { skipped: true, year: w?.year };
   const lock = await sb.from('cm_world').update({ npc_year: w.year }).eq('id', 1).or(`npc_year.is.null,npc_year.lt.${w.year}`).select('id'); if (!lock.data?.length) return { skipped: true, year: w.year };
@@ -111,12 +128,18 @@ async function run() {
   const offers = (await sb.from('cm_offers').select('from_c,to_c,status,kind,year').gte('year', year - 1)).data || [], pset = new Set(players.map(p => p.code)), byCode = Object.fromEntries(rows.map(r => [r.code, r]));
   const news = [], shifts = [];
   // 1) presiden NPC berpikir + belajar; ingatan hubungan dari perlakuan pemain
+  const plan = {};
   for (const r of npcs) { const c = r.data; c.rel = c.rel || {};
     for (const o of offers) { if (o.year !== year - 1 && o.year !== year) continue; if (o.to_c === c.code && pset.has(o.from_c)) c.rel[o.from_c] = clamp((c.rel[o.from_c] || 0) + (o.status === 'active' ? 5 : o.kind === 'peace' ? 3 : 1), -100, 100); if (o.from_c === c.code && pset.has(o.to_c) && o.status === 'rejected') c.rel[o.to_c] = clamp((c.rel[o.to_c] || 0) - 4, -100, 100); }
     for (const p of players) if (c.war?.includes(p.code)) c.rel[p.code] = clamp((c.rel[p.code] || 0) - 10, -100, 100); else if (p.data.war?.some(x => byCode[x] && c.mem?.some(a => a !== 'UN' && byCode[x].data.mem?.includes(a)))) c.rel[p.code] = clamp((c.rel[p.code] || 0) - 5, -100, 100);
-    const t = think(c, year); r.t = t; if (t.changed && t.acts.length) shifts.push(r); }
+    r.pc = prepare(c, year); }
+  // negara yang "layak dipikirkan Gemini": ekonomi besar, atau sedang bermasalah / berperang / berhubungan dengan pemain
+  const ranked0 = [...npcs].sort((a, b) => b.data.gdp - a.data.gdp), top = new Set(ranked0.slice(0, 48).map(r => r.code)), interesting = npcs.filter(r => top.has(r.code) || Math.max(...Object.values(r.pc.pr)) > 5 || r.data.war?.length || players.some(p => Math.abs(r.data.rel?.[p.code] || 0) >= 15)).slice(0, 120);
+  const batches = []; for (let i = 0; i < interesting.length; i += 15) batches.push(interesting.slice(i, i + 15).map(r => ({ r, pc: r.pc, rel: players.map(p => `${p.data.name} ${r.data.rel?.[p.code] || 0}`).join(', ') })));
+  let aiN = 0; (await Promise.all(batches.map(b => aiPresidents(b)))).forEach(o => Object.assign(plan, o));
+  for (const r of npcs) { const t = think(r.data, year, r.pc, plan[r.code]); r.t = t; if (t.by === 'gemini') aiN++; if (t.changed && t.acts.length) shifts.push(r); }
   let saved = 0; for (let i = 0; i < npcs.length; i += 25) { const res = await Promise.all(npcs.slice(i, i + 25).map(r => sb.from('cm_countries').update({ data: r.data, ver: r.ver + 1 }).eq('code', r.code).eq('ver', r.ver).is('president_uid', null).select('code'))); saved += res.filter(x => x.data?.length).length; }
-  for (const r of shifts.sort((a, b) => b.data.gdp - a.data.gdp).slice(0, 6)) news.push({ year, country: r.code, source: 'Analisis Dunia', kind: 'politik', title: `${r.data.name} mengubah arah: fokus ${GOALS[r.t.goal].t}`, body: `Presiden ${r.data.gov.president} ${r.t.acts.map(k => ACTS[k][3]).join(' dan ')}.${r.t.learned ? ` Evaluasi kebijakan tahun lalu: ${r.t.learned.reward >= 0 ? 'berhasil' : 'kurang berhasil'}, strategi disesuaikan.` : ''}` });
+  for (const r of shifts.sort((a, b) => b.data.gdp - a.data.gdp).slice(0, 6)) news.push({ year, country: r.code, source: 'Analisis Dunia', kind: 'politik', title: `${r.data.name} mengubah arah: fokus ${GOALS[r.t.goal].t}`, body: `${r.t.why ? '"' + r.t.why + '" — ' : ''}Presiden ${r.data.gov.president} ${r.t.acts.map(k => ACTS[k][3]).join(' dan ')}.${r.t.learned ? ` Evaluasi kebijakan tahun lalu: ${r.t.learned.reward >= 0 ? 'berhasil' : 'kurang berhasil'}, strategi disesuaikan.` : ''}` });
   // 2) diplomasi adaptif ke negara pemain
   const busy = new Set(offers.filter(o => o.status === 'pending' || o.status === 'active').map(o => [o.from_c, o.to_c].sort().join('|'))), ins = [];
   for (const p of players) { const ranked = npcs.map(r => [r, affinity(r.data, p.data) + R() * 12]).sort((a, b) => b[1] - a[1]);
@@ -135,7 +158,7 @@ async function run() {
   { const top = shifts.slice(0, 6), spin = await aiNewsSpin(top.map(r => ({ n: r.data.name, goal: GOALS[r.t.goal].t, acts: r.t.acts.map(k => ACTS[k][3]).join(', '), ok: r.t.learned ? (r.t.learned.reward >= 0 ? 'berhasil' : 'kurang berhasil') : 'belum ada' })));
     top.forEach((r, i) => { if (spin[i]) { const n = news.find(x => x.country === r.code && x.source === 'Analisis Dunia'); if (n) n.body = spin[i] + ' — ' + n.body; } }); }
   if (news.length) await sb.from('cm_news').insert(news);
-  return { ok: true, year, npcs: saved, offers: ins.length, news: news.length };
+  return { ok: true, year, npcs: saved, ai: aiN, offers: ins.length, news: news.length };
 }
 // balasan warga NPC langsung setelah pemain memposting (bukan menunggu pergantian tahun)
 async function react(uid, postId) {
