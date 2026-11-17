@@ -49,6 +49,7 @@ const PROXY = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_
 const GOV = new Set(['law_templates', 'law_draft', 'gov_state', 'office_apply', 'office_decide', 'office_resign', 'office_dismiss', 'proposal_create', 'proposal_decide', 'law_propose', 'law_repeal', 'law_mp', 'court_review', 'prosecute', 'bank_rate', 'war_turn', 'leg_register', 'leg_withdraw', 'leg_vote', 'leg_call', 'succeed']); // jabatan, RUU custom, perang NPC (cm-gov)
 const UN_FN = new Set(['unga_join', 'unga_sync', 'unga_leave', 'unga_say', 'unga_chair', 'unga_speech', 'unga_talk']); // Sidang Majelis Umum PBB (cm-un)
 const SOC = new Set(['soc_open', 'soc_tick', 'soc_comment', 'soc_post_react', 'soc_profile', 'soc_inbox', 'soc_clike']); // media sosial hidup (cm-soc)
+const PUB = new Set(['pub_feed', 'pub_post', 'pub_like', 'pub_comments', 'pub_comment', 'pub_delete']); // Sosial (Publik) lintas negara (cm-pub)
 const I18N_FN = new Set(['tr', 'lang_get', 'lang_set']); // terjemahan antarmuka (cm-i18n)
 const PRES = new Set(['pres_state', 'coalition_set', 'parliament_dissolve', 'decree', 'appoint_direct', 'amnesty']); // Pusat Pemerintahan (cm-pres)
 const EXTRA = new Set(['set_profile', 'builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
@@ -57,7 +58,7 @@ export async function api(action, body = {}, { quiet = false, keepalive = false 
   const token = ses?.session?.access_token; if (!token) throw new Error('Sesi login berakhir. Silakan masuk lagi.');
   let res;
   try {
-    const viaNpc = PROXY.has(action), fnName = viaNpc ? 'cm-npc' : SOC.has(action) ? 'cm-soc' : UN_FN.has(action) ? 'cm-un' : I18N_FN.has(action) ? 'cm-i18n' : PRES.has(action) ? 'cm-pres' : GOV.has(action) ? 'cm-gov' : EXTRA.has(action) ? 'cm-extra' : 'cm-api', payload = viaNpc ? { action: 'proxy', inner: action, session: SESSION, ...body } : { action, session: SESSION, ...body }, hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY };
+    const viaNpc = PROXY.has(action), fnName = viaNpc ? 'cm-npc' : PUB.has(action) ? 'cm-pub' : SOC.has(action) ? 'cm-soc' : UN_FN.has(action) ? 'cm-un' : I18N_FN.has(action) ? 'cm-i18n' : PRES.has(action) ? 'cm-pres' : GOV.has(action) ? 'cm-gov' : EXTRA.has(action) ? 'cm-extra' : 'cm-api', payload = viaNpc ? { action: 'proxy', inner: action, session: SESSION, ...body } : { action, session: SESSION, ...body }, hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY };
     try { res = await fetch(`${SB_URL}/functions/v1/${fnName}`, { method: 'POST', keepalive, headers: hdr, body: JSON.stringify(payload) }); }
     catch (e) { if (!viaNpc) throw e; res = await fetch(`${SB_URL}/functions/v1/cm-api`, { method: 'POST', keepalive, headers: hdr, body: JSON.stringify({ action, session: SESSION, ...body }) }); }
   } catch (e) { S.online = false; throw new Error('Tidak dapat terhubung ke server'); }
