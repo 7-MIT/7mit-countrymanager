@@ -96,7 +96,7 @@ export async function sync(force) {
     const firstTime = !S.since;
     if (d.full) S.countries.clear(); d.countries.forEach(c => S.countries.set(c.code, c)); if (d.since) S.since = d.since;
     const prevPres = S.me?.president, prevAnn = S.world.announcement;
-    S.me = d.me; S.world = d.world; S.visitors = d.visitors; handleAdv(d.adv);
+    S.me = d.me; S.world = d.world; S.visitors = d.visitors; handleAdv(d.adv); if (S.npcYear !== d.world.year && !d.world.advancing) { S.npcYear = d.world.year; npcThink(); }
     if (d.pending > S.pending && !firstTime) pushNotif({ id: 'pend' + Date.now(), icon: 'inbox', title: 'Penawaran masuk', body: `${d.pending} penawaran menunggu jawaban Anda` });
     S.pending = d.pending;
     if (d.world.announcement && d.world.announcement !== S.lastAnn) { if (S.lastAnn !== '' || !firstTime) pushNotif({ id: 'ann' + d.world.announcement, icon: 'megaphone', title: 'Pengumuman UN', body: d.world.announcement }); S.lastAnn = d.world.announcement; }
@@ -109,6 +109,8 @@ export async function sync(force) {
     updateChrome(); softRender();
   } catch (e) { S.online = false; updateConn(); } finally { syncing = false; }
 }
+// otak NPC adaptif: dipicu sekali per tahun simulasi (server menjamin hanya satu yang jalan)
+async function npcThink() { try { const r = await (await fetch(`${SB_URL}/functions/v1/cm-npc`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${S.token}`, apikey: SB_KEY }, body: '{}' })).json(); if (r?.data?.ok) queueSync(); } catch (e) {} }
 function queueSync() { clearTimeout(syncTimer); syncTimer = setTimeout(async () => { await sync(true); loadSel(); loadMine(); if (S.page === 'news') loadNews(); if (S.page === 'social') loadComments(); if (S.page === 'land') reloadBuilds(); }, 450); }
 
 async function subscribeRealtime() {
