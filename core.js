@@ -16,13 +16,14 @@ export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const ic = (n, cls = '') => `<i data-lucide="${n}" class="${cls}"></i>`;
-export const fmt = (n, d = 0) => Number(n).toLocaleString('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d });
+import { state as I18N } from './i18n.js';
+export const fmt = (n, d = 0) => Number(n).toLocaleString(I18N.loc, { minimumFractionDigits: d, maximumFractionDigits: d });
 export const compact = (n) => { const a = Math.abs(n); if (a >= 1e15) return fmt(n / 1e15, 2) + ' kuadriliun'; if (a >= 1e12) return fmt(n / 1e12, 2) + ' T'; if (a >= 1e9) return fmt(n / 1e9, 2) + ' M'; if (a >= 1e6) return fmt(n / 1e6, 2) + ' jt'; if (a >= 1e3) return fmt(n / 1e3, 1) + ' rb'; return fmt(n, 2); };
 export const usd = (b) => { const a = Math.abs(b); return `${b < 0 ? '-' : ''}$${a >= 1000 ? fmt(a / 1000, 2) + ' T' : fmt(a, 2) + ' M'}`; };
 export const loc = (b, c) => `${c.sym} ${compact(b * 1e9 * c.fx)}`;
 export const cty = (code) => S.countries.get(code);
 export const ago = (ts) => { const s = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000); if (s < 60) return 'baru saja'; if (s < 3600) return Math.floor(s / 60) + ' mnt lalu'; if (s < 86400) return Math.floor(s / 3600) + ' jam lalu'; return Math.floor(s / 86400) + ' hari lalu'; };
-export const when = (ts) => new Date(ts).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+export const when = (ts) => new Date(ts).toLocaleString(I18N.loc, { dateStyle: 'medium', timeStyle: 'short' });
 export const isPres = () => !!S.me?.president;
 export const myCode = () => S.me?.president || S.me?.citizenship || null;
 
@@ -46,6 +47,7 @@ export function closeModal() { const m = $('#modal'); m.classList.add('hidden');
 // ---------- API ----------
 const PROXY = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law', 'motion']); // keputusan NPC/parlemen dipertajam Gemini lewat cm-npc
 const GOV = new Set(['law_templates', 'law_draft', 'gov_state', 'office_apply', 'office_decide', 'office_resign', 'office_dismiss', 'proposal_create', 'proposal_decide', 'law_propose', 'law_repeal', 'law_mp', 'court_review', 'prosecute', 'bank_rate', 'war_turn', 'leg_register', 'leg_withdraw', 'leg_vote', 'leg_call', 'succeed']); // jabatan, RUU custom, perang NPC (cm-gov)
+const I18N_FN = new Set(['tr', 'lang_get', 'lang_set']); // terjemahan antarmuka (cm-i18n)
 const PRES = new Set(['pres_state', 'coalition_set', 'parliament_dissolve', 'decree', 'appoint_direct', 'amnesty']); // Pusat Pemerintahan (cm-pres)
 const EXTRA = new Set(['set_profile', 'builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
 export async function api(action, body = {}, { quiet = false, keepalive = false } = {}) {
@@ -53,7 +55,7 @@ export async function api(action, body = {}, { quiet = false, keepalive = false 
   const token = ses?.session?.access_token; if (!token) throw new Error('Sesi login berakhir. Silakan masuk lagi.');
   let res;
   try {
-    const viaNpc = PROXY.has(action), fnName = viaNpc ? 'cm-npc' : PRES.has(action) ? 'cm-pres' : GOV.has(action) ? 'cm-gov' : EXTRA.has(action) ? 'cm-extra' : 'cm-api', payload = viaNpc ? { action: 'proxy', inner: action, session: SESSION, ...body } : { action, session: SESSION, ...body }, hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY };
+    const viaNpc = PROXY.has(action), fnName = viaNpc ? 'cm-npc' : I18N_FN.has(action) ? 'cm-i18n' : PRES.has(action) ? 'cm-pres' : GOV.has(action) ? 'cm-gov' : EXTRA.has(action) ? 'cm-extra' : 'cm-api', payload = viaNpc ? { action: 'proxy', inner: action, session: SESSION, ...body } : { action, session: SESSION, ...body }, hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY };
     try { res = await fetch(`${SB_URL}/functions/v1/${fnName}`, { method: 'POST', keepalive, headers: hdr, body: JSON.stringify(payload) }); }
     catch (e) { if (!viaNpc) throw e; res = await fetch(`${SB_URL}/functions/v1/cm-api`, { method: 'POST', keepalive, headers: hdr, body: JSON.stringify({ action, session: SESSION, ...body }) }); }
   } catch (e) { S.online = false; throw new Error('Tidak dapat terhubung ke server'); }
