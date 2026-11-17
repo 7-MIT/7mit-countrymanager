@@ -1,5 +1,5 @@
 // Country Manager — boot, login, sinkronisasi real-time, peta, aksi
-import { sb, S, SESSION, SB_URL, SB_KEY, $, $$, esc, ic, fmt, usd, cty, toast, modal, closeModal, api, act, refreshIcons, animateNumbers, ago, isPres, myCode, REGION_ID } from './core.js';
+import { sb, S, SESSION, SB_URL, SB_KEY, $, $$, esc, ic, fmt, usd, cty, toast, modal, closeModal, api, act, lastPres, reclaimPresidency, refreshIcons, animateNumbers, ago, isPres, myCode, REGION_ID } from './core.js';
 import { PAGES, hooks, showVote, tfPreview, tickClock, mapMetrics } from './pages.js';
 import * as P from './pages.js';
 import { Globe } from './globe.js';
@@ -116,7 +116,7 @@ export async function sync(force) {
     const firstTime = !S.since;
     if (d.full) S.countries.clear(); d.countries.forEach(c => S.countries.set(c.code, c)); if (d.since) S.since = d.since;
     const prevPres = S.me?.president, prevAnn = S.world.announcement;
-    const prevYear = S.world?.year; S.me = d.me; S.world = d.world; S.visitors = d.visitors; handleAdv(d.adv); if (prevYear && d.world.year !== prevYear) pushNotif({ id: 'unga' + d.world.year, icon: 'globe', title: `Sidang Majelis Umum PBB ${d.world.year} dibuka`, body: 'Pemimpin negara dan menteri luar negeri diundang berpidato di markas PBB (menu Sidang PBB).' }); if (S.npcYear !== d.world.year && !d.world.advancing) { S.npcYear = d.world.year; npcThink(); }
+    const prevYear = S.world?.year; S.me = d.me; if (d.me?.president) { lastPres(d.me.president); wasAway = false; } S.world = d.world; S.visitors = d.visitors; handleAdv(d.adv); if (prevYear && d.world.year !== prevYear) pushNotif({ id: 'unga' + d.world.year, icon: 'globe', title: `Sidang Majelis Umum PBB ${d.world.year} dibuka`, body: 'Pemimpin negara dan menteri luar negeri diundang berpidato di markas PBB (menu Sidang PBB).' }); if (S.npcYear !== d.world.year && !d.world.advancing) { S.npcYear = d.world.year; npcThink(); }
     if (d.pending > S.pending && !firstTime) pushNotif({ id: 'pend' + Date.now(), icon: 'inbox', title: 'Penawaran masuk', body: `${d.pending} penawaran menunggu jawaban Anda` });
     S.pending = d.pending;
     if (d.world.announcement && d.world.announcement !== S.lastAnn) { if (S.lastAnn !== '' || !firstTime) pushNotif({ id: 'ann' + d.world.announcement, icon: 'megaphone', title: 'Pengumuman UN', body: d.world.announcement }); S.lastAnn = d.world.announcement; }
@@ -441,7 +441,7 @@ function releaseBeacon() { if (!S.me?.president || !S.token) return; try { fetch
 addEventListener('pagehide', releaseBeacon);
 
 // ================= JABATAN, LEGISLASI, PERANG NPC (cm-gov) =================
-async function loadGov(force) { if (!S.me) return; const c = S.me.president || S.me.citizenship || S.sel; if (!c) return; try { if (!S.templates) S.templates = (await api('law_templates', {}, { quiet: true })).templates; const [d, pst] = await Promise.all([api('gov_state', { country: c }, { quiet: true }), api('pres_state', { country: c }, { quiet: true }).catch(() => null)]), j = JSON.stringify([d, pst]); if (j !== S._gj || force) { S._gj = j; S.G = d; S.P = pst; if (['jabatan', 'uu', 'struktur'].includes(S.page)) softRender(); } } catch (e) { if (!S.G) S.G = null; } }
+async function loadGov(force) { if (!S.me) return; const c = S.me.president || S.me.citizenship || S.sel; if (!c) return; try { if (!S.templates) S.templates = (await api('law_templates', {}, { quiet: true })).templates; const [d, pst] = await Promise.all([api('gov_state', { country: c }, { quiet: true }), api('pres_state', { country: c }, { quiet: true }).catch(() => null)]), j = JSON.stringify([d, pst]); if (j !== S._gj || force) { S._gj = j; if (d && S.me?.president && S.me.president === d.country) d.isPresident = true; if (pst && S.me?.president && S.me.president === pst.country) pst.isPresident = true; S.G = d; S.P = pst; if (['jabatan', 'uu', 'struktur'].includes(S.page)) softRender(); } } catch (e) { if (!S.G) S.G = null; } }
 const afterGov = async () => { await Promise.all([loadGov(true), loadMine(true), sync(true)]); render(); };
 const gvVal = (id) => ($('#' + id)?.value ?? '').trim();
 function composer({ mode, tid }) {
@@ -459,6 +459,12 @@ function composer({ mode, tid }) {
   const el = document.getElementById('modal'); $$('input[type=range]', el).forEach(i => i.oninput = calc); calc();
   $('#bDraft')?.addEventListener('click', async (e) => { const b = e.currentTarget; b.disabled = true; try { const d = await api('law_draft', { name: gvVal('bName'), desc: gvVal('bDesc') }); for (const k in FXN_C) { const v = d.fx[k] ?? 0; $('#fx_' + k).value = v; } calc(); $('#bWhy').innerHTML = `${esc(d.why)}${d.risks?.length ? '<br>Risiko: ' + d.risks.map(esc).join('; ') : ''}`; } catch (er) {} b.disabled = false; });
 }
+// pulihkan jabatan presiden otomatis bila tab sempat tidur / sesi terlepas (mis. iPad, tab di latar belakang)
+let restoring = false;
+let wasAway = true; // true saat halaman baru dimuat atau tab sempat disembunyikan
+async function restorePresidency() { if (restoring || !wasAway || !S.me || S.me.president || S.inStart || !lastPres() || document.hidden) return; wasAway = false; restoring = true; try { if (await reclaimPresidency()) { await sync(true); if (S.me?.president) { toast('Jabatan presiden dipulihkan', 'ok'); await Promise.all([loadMine(true), loadSel(true), loadGov(true)]); render(); } } } catch (e) {} restoring = false; }
+document.addEventListener('visibilitychange', () => { if (document.hidden) wasAway = true; else { sync(true).then(restorePresidency).catch(() => {}); } }); window.addEventListener('focus', () => restorePresidency()); setTimeout(() => restorePresidency(), 4000);
+document.addEventListener('pres-restored', () => { sync(true).then(() => loadGov(true)).then(() => { if (['jabatan', 'uu', 'struktur'].includes(S.page)) render(); }).catch(() => {}); });
 let succBusy = false;
 async function trySucceed() { if (succBusy || !S.me || S.me.president || !S.G?.isVP) return; succBusy = true; try { const r = await api('succeed', {}, { quiet: true }); if (r?.status === 'succeeded') { toast('Presiden meninggalkan jabatan: Anda dilantik sebagai Presiden!', 'ok'); pushNotif({ id: 'succ' + Date.now(), icon: 'crown', title: 'Anda dilantik sebagai Presiden', body: 'Suksesi otomatis dari Wakil Presiden' }); await sync(true); await Promise.all([loadMine(true), loadSel(true), loadGov(true)]); updateChrome(); render(); } } catch (e) {} succBusy = false; }
 setInterval(trySucceed, 15000);
