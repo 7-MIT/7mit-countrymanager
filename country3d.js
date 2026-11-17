@@ -2,6 +2,7 @@
 import * as THREE from './lib/three.module.js';
 import { OrbitControls } from './lib/OrbitControls.js';
 import { AREAS } from './areas.js';
+import { makeBuilding, kit } from './models.js';
 
 const KM = 100;                       // 1 unit scene = 100 km
 const D2R = Math.PI / 180;
@@ -47,24 +48,32 @@ export class Country3D {
     const X = (lon) => (lon - this.b.minLon) / (this.b.maxLon - this.b.minLon) * N, Y = (lat) => (1 - (lat - this.b.minLat) / (this.b.maxLat - this.b.minLat)) * N;
     rings.forEach(r => { r.forEach((p, i) => i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1]))); g.closePath(); }); g.fill('evenodd');
     const c2 = document.createElement('canvas'); c2.width = N; c2.height = N; const g2 = c2.getContext('2d'); g2.filter = 'blur(2.2px)'; g2.drawImage(c, 0, 0); const d = g2.getImageData(0, 0, N, N).data; this.mask = new Float32Array(N * N); for (let i = 0; i < N * N; i++) this.mask[i] = d[i * 4] / 255; this.N = N;
+    const c3 = document.createElement('canvas'); c3.width = N; c3.height = N; const g3 = c3.getContext('2d'); g3.filter = 'blur(8px)'; g3.drawImage(c, 0, 0); const d3 = g3.getImageData(0, 0, N, N).data; this.soft = new Float32Array(N * N); for (let i = 0; i < N * N; i++) this.soft[i] = d3[i * 4] / 255;
   }
-  hgt(lon, lat) { const { relief, is3, s1, s2 } = this.cfg, b = this.b, u = (lon - b.minLon) / (b.maxLon - b.minLon), v = (b.maxLat - lat) / (b.maxLat - b.minLat), m = this.maskAt(lon, lat), n = fbm(u * 6 + 3, v * 6 + 3, s1), n2 = fbm(u * 18, v * 18, s2), land = m > .5, coast = Math.max(0, (m - .5) * 2); let h; if (is3) h = land ? relief * (.12 + Math.pow(coast, .6) * (.2 + .8 * n)) * (.6 + .8 * n2) + .02 : -(1 - m) * relief * .5 - .05; else h = land ? .012 : -.01; return { h, land, m, n, n2, coast }; }
+  softAt(lon, lat) { const N = this.N, u = (lon - this.b.minLon) / (this.b.maxLon - this.b.minLon), v = 1 - (lat - this.b.minLat) / (this.b.maxLat - this.b.minLat); const x = Math.min(N - 1, Math.max(0, Math.floor(u * N))), y = Math.min(N - 1, Math.max(0, Math.floor(v * N))); return this.soft[y * N + x]; }
+  hgt(lon, lat) {
+    const { relief, is3, s1, s2 } = this.cfg, b = this.b, u = (lon - b.minLon) / (b.maxLon - b.minLon), v = (b.maxLat - lat) / (b.maxLat - b.minLat), sft = this.softAt(lon, lat);
+    const n = fbm(u * 5 + 3, v * 5 + 3, s1), n2 = fbm(u * 16, v * 16, s2), sm = (a, c, x) => { const t = Math.max(0, Math.min(1, (x - a) / (c - a))); return t * t * (3 - 2 * t); };
+    const land = sft > .5, inland = sm(.5, .88, sft); let h;
+    if (is3) h = land ? .02 + relief * (.06 + .94 * n) * inland * inland * (.55 + .9 * n2) : -sm(.5, .08, sft) * relief * .9 - .03; else h = land ? .012 : -.01;
+    return { h, land, m: sft, n, n2, coast: inland };
+  }
   maskAt(lon, lat) { const N = this.N, u = (lon - this.b.minLon) / (this.b.maxLon - this.b.minLon), v = 1 - (lat - this.b.minLat) / (this.b.maxLat - this.b.minLat); const x = Math.min(N - 1, Math.max(0, Math.floor(u * N))), y = Math.min(N - 1, Math.max(0, Math.floor(v * N))); return this.mask[y * N + x]; }
-  clear() { if (this.root) { this.scene.remove(this.root); this.root.traverse(o => { o.geometry?.dispose?.(); const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach(x => { x.map?.dispose?.(); x.bumpMap?.dispose?.(); x.dispose?.(); }); }); } this.root = new THREE.Group(); this.scene.add(this.root); this.ships = []; this.clouds = []; this.water = null; this.cityInst = null; this.detail = new THREE.Group(); this.root.add(this.detail); this.dtiles = new Map(); this.dkey = ''; }
+  clear() { if (this.root) { this.scene.remove(this.root); this.root.traverse(o => { o.geometry?.dispose?.(); const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach(x => { x.map?.dispose?.(); x.bumpMap?.dispose?.(); x.dispose?.(); }); }); } this.root = new THREE.Group(); this.scene.add(this.root); this.ships = []; this.clouds = []; this.water = null; this.cityInst = null; this.cities = []; this.cars = []; this.pins = null; this.detail = new THREE.Group(); this.root.add(this.detail); this.dtiles = new Map(); this.dkey = ''; }
   async build() {
     this.clear(); const root = this.root, SEG = 200, b = this.b, seed = hash(this.code), R = rng(seed), is3 = this.mode === '3d';
     const geo = new THREE.PlaneGeometry(1, 1, SEG, SEG); geo.rotateX(-Math.PI / 2); const P = geo.attributes.position, cols = new Float32Array(P.count * 3), uv = geo.attributes.uv;
-    const relief = Math.min(this.diag * .07, 20) * (is3 ? 1 : 0), col = new THREE.Color(), lat0 = this.lat0, arctic = Math.abs(lat0) > 55, desert = Math.abs(lat0) > 14 && Math.abs(lat0) < 33, trop = Math.abs(lat0) <= 14;
-    const grass = new THREE.Color(trop ? 0x3f9a46 : desert ? 0xc9a85b : arctic ? 0xdfe8ee : 0x6fae48), hill = new THREE.Color(trop ? 0x2c6e36 : desert ? 0xa77c3c : arctic ? 0xb7c6cf : 0x4d7f36), sand = new THREE.Color(0xe3d39c), rock = new THREE.Color(0x8c8c88), snow = new THREE.Color(0xf4f8fb), deep = new THREE.Color(0x0e3550), shallow = new THREE.Color(0x2f8fb0);
-    this.cfg = { relief, is3, s1: seed % 97, s2: seed % 53 }; this.landCells = []; this.seaCells = [];
+    const relief = Math.min(this.diag * .03, 9) * (is3 ? 1 : 0), col = new THREE.Color(), lat0 = this.lat0, arctic = Math.abs(lat0) > 55, desert = Math.abs(lat0) > 14 && Math.abs(lat0) < 33, trop = Math.abs(lat0) <= 14;
+    const grass = new THREE.Color(trop ? 0x4caf50 : desert ? 0xd8b66a : arctic ? 0xdfe9ee : 0x7cb342), hill = new THREE.Color(trop ? 0x2e7d32 : desert ? 0xb98c4a : arctic ? 0xb9c9d2 : 0x558b2f), sand = new THREE.Color(0xe8d9a0), rock = new THREE.Color(0x8c8c88), snow = new THREE.Color(0xf4f8fb), deep = new THREE.Color(0x0e3550), shallow = new THREE.Color(0x2f8fb0);
+    this.biomeTree = trop ? 0x2e8b3a : desert ? 0x8a9a3a : arctic ? 0x2f6b4a : 0x3f8f3a; this.cfg = { relief, is3, s1: seed % 97, s2: seed % 53 }; this.landCells = []; this.seaCells = [];
     for (let i = 0; i < P.count; i++) {
       const u = (i % (SEG + 1)) / SEG, v = Math.floor(i / (SEG + 1)) / SEG; const lon = b.minLon + u * (b.maxLon - b.minLon), lat = b.maxLat - v * (b.maxLat - b.minLat);
       const x = this.px(lon, lat), z = this.pz(lat); const { h, land, m, n2 } = this.hgt(lon, lat);
       P.setXYZ(i, x, h, z);
-      if (is3) { const t = relief ? h / relief : 0; if (!land) col.copy(deep).lerp(shallow, Math.min(1, m * 1.6)); else if (t < .06) col.copy(sand); else if (t < .5) col.copy(grass).lerp(hill, Math.min(1, t * 1.6)); else col.copy(hill).lerp(rock, Math.min(1, (t - .5) * 2)); if (land && t > .72) col.lerp(snow, Math.min(1, (t - .72) * 4)); if (arctic && land) col.lerp(snow, .55); col.offsetHSL(0, 0, (n2 - .5) * .07); }
+      if (is3) { const t = relief ? h / relief : 0; if (!land) col.copy(deep).lerp(shallow, Math.min(1, m * 1.6)); else if (t < .035) col.copy(sand); else if (t < .07) col.copy(sand).lerp(grass, (t - .035) / .035); else if (t < .6) col.copy(grass).lerp(hill, Math.min(1, t * 1.4)); else col.copy(hill).lerp(rock, Math.min(1, (t - .6) * 2.2)); if (land && t > .85) col.lerp(snow, Math.min(1, (t - .85) * 5)); if (arctic && land) col.lerp(snow, .45); col.offsetHSL(0, 0, (n2 - .5) * .07); }
       else col.set(0xffffff); cols[i * 3] = col.r; cols[i * 3 + 1] = col.g; cols[i * 3 + 2] = col.b;
       if (!is3) { const mx = (lon + 180) / 360, my = (1 - Math.log(Math.tan(Math.PI / 4 + lat * D2R / 2)) / Math.PI) / 2; uv.setXY(i, mx, my); }
-      if (land && m > .98 && i % 37 === 0) this.landCells.push([x, h, z]); else if (!land && m < .05 && i % 29 === 0) this.seaCells.push([x, z]);
+      if (land && m > .8 && i % 23 === 0) this.landCells.push([x, h, z, lon, lat]); else if (!land && m < .05 && i % 29 === 0) this.seaCells.push([x, z]);
     }
     geo.setAttribute('color', new THREE.BufferAttribute(cols, 3)); geo.computeVertexNormals();
     let mat;
@@ -84,9 +93,21 @@ export class Country3D {
   }
   waterBump() { const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d'), id = g.createImageData(256, 256); for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) { const v = Math.floor(fbm(x / 24, y / 24, 7) * 255); const k = (y * 256 + x) * 4; id.data[k] = id.data[k + 1] = id.data[k + 2] = v; id.data[k + 3] = 255; } g.putImageData(id, 0, 0); const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(Math.max(4, this.W / 3), Math.max(4, this.H / 3)); return t; }
   addCities(R) {
-    if (!this.landCells.length) return; const n = Math.min(14, 3 + Math.round(Math.log10(Math.max(1000, this.pop || 1e7)) )), boxes = []; const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xe8edf2, emissive: 0xffd08a, emissiveIntensity: 0 }), n * 40); this.cityMat = inst.material; const m = new THREE.Matrix4(), q = new THREE.Quaternion(); let k = 0; const sc = Math.max(.006, Math.min(this.diag * .0014, .12));
-    for (let c = 0; c < n; c++) { const [cx, cy, cz] = this.landCells[Math.floor(R() * this.landCells.length)], sz = (0.6 + R() * 1.8); for (let i = 0; i < 40; i++) { const dx = (R() - .5) * sc * 14 * sz, dz = (R() - .5) * sc * 14 * sz, hh = sc * (1 + R() * 7 * (1 - Math.hypot(dx, dz) / (sc * 10 * sz + .01))); m.compose(new THREE.Vector3(cx + dx, cy + hh / 2, cz + dz), q, new THREE.Vector3(sc * 1.2, Math.max(sc, hh), sc * 1.2)); inst.setMatrixAt(k++, m); } }
-    inst.count = k; this.root.add(inst); this.cityInst = inst;
+    if (!this.landCells.length) return; const sc = Math.max(.0035, Math.min(this.diag * .0011, .12)) / 4, nC = Math.min(16, 4 + Math.round(Math.log10(Math.max(1000, this.pop || 1e7)))); this.sc = sc; this.cities = []; this.cars = []; this.pins = new THREE.Group(); this.root.add(this.pins);
+    const ROADM = new THREE.MeshStandardMaterial({ color: 0x34363b, roughness: .9 }), PADM = new THREE.MeshStandardMaterial({ color: 0xbfc4c9, roughness: .9 }), pool = ['housing', 'housing', 'housing', 'school', 'hospital', 'factory', 'park', 'techhub', 'housing', 'rail', 'farm', 'anticorr'], carCols = [0xe53935, 0x1e88e5, 0xfdd835, 0xffffff, 0x43a047];
+    for (let c = 0; c < nC; c++) {
+      const [cx, cy, cz] = this.landCells[Math.floor(R() * this.landCells.length)]; const g = new THREE.Group(); g.position.set(cx, Math.max(.02, cy) + sc * 1.2, cz); g.scale.setScalar(sc); g.rotation.y = R() * 6;
+      const n = c === 0 ? 3 : 2, pitch = 5;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { const sub = new THREE.Group(); sub.position.set((i - (n - 1) / 2) * pitch, 0, (j - (n - 1) / 2) * pitch); const pad = new THREE.Mesh(new THREE.BoxGeometry(4.1, .16, 4.1), PADM); pad.position.y = -.08; pad.receiveShadow = true; sub.add(pad); makeBuilding(pool[Math.floor(R() * pool.length)], 1 + (R() < .25 ? 1 : 0), sub, { outward: 0 }); g.add(sub); }
+      const span = n * pitch; for (let k = 0; k <= n; k++) { const v = (k - n / 2) * pitch; const a = new THREE.Mesh(new THREE.PlaneGeometry(span + .9, .9), ROADM); a.rotation.x = -Math.PI / 2; a.position.set(0, .01, v); g.add(a); const b2 = a.clone(); b2.rotation.z = Math.PI / 2; b2.position.set(v, .011, 0); g.add(b2); }
+      for (let k = 0; k < 5; k++) { const car = new THREE.Mesh(new THREE.BoxGeometry(.6, .25, .3), new THREE.MeshStandardMaterial({ color: carCols[k % 5] })); car.position.y = .15; g.add(car); this.cars.push({ car, span, line: (Math.floor(R() * (n + 1)) - n / 2) * pitch, axis: k % 2, t: R() * span, sp: 2 + R() * 2, dir: R() < .5 ? 1 : -1 }); }
+      this.root.add(g); this.cities.push(g);
+      const pin = new THREE.Mesh(new THREE.ConeGeometry(Math.max(.025, this.diag * .004), Math.max(.07, this.diag * .012), 8), new THREE.MeshBasicMaterial({ color: 0xffe3d2 })); pin.rotation.x = Math.PI; pin.position.set(cx, Math.max(.02, cy) + Math.max(.07, this.diag * .012) * .55, cz); this.pins.add(pin);
+    }
+    // pohon
+    const treeN = Math.min(6000, Math.round(this.diag * 70)), tg = new THREE.ConeGeometry(.5, 1.4, 6); tg.translate(0, .7, 0); const tr = new THREE.InstancedMesh(tg, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: .9 }), treeN), m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color(); let k = 0; const ts = Math.max(.006, this.diag * .00055), bm = this.biomeTree;
+    for (let tries = 0; tries < treeN * 4 && k < treeN; tries++) { const lon = this.b.minLon + R() * (this.b.maxLon - this.b.minLon), lat = this.b.minLat + R() * (this.b.maxLat - this.b.minLat), hh = this.hgt(lon, lat); if (!hh.land || hh.m < .62) continue; const s2 = ts * (.7 + R() * .9); m.compose(new THREE.Vector3(this.px(lon, lat), hh.h, this.pz(lat)), q, new THREE.Vector3(s2, s2 * (.9 + R() * .6), s2)); tr.setMatrixAt(k, m); col.set(bm).offsetHSL((R() - .5) * .05, 0, (R() - .5) * .1); tr.setColorAt(k, col); k++; }
+    tr.count = k; tr.castShadow = false; this.root.add(tr); this.treesMesh = tr;
   }
   addShips(R) { if (this.seaCells.length < 5) return; for (let i = 0; i < Math.min(8, this.seaCells.length); i++) { const [x, z] = this.seaCells[Math.floor(R() * this.seaCells.length)]; const s = Math.max(.02, this.diag * .008); const g = new THREE.Group(); const hull = new THREE.Mesh(new THREE.BoxGeometry(s * 3, s * .6, s), new THREE.MeshStandardMaterial({ color: 0x37474f })); const top = new THREE.Mesh(new THREE.BoxGeometry(s * .8, s * .7, s * .8), new THREE.MeshStandardMaterial({ color: 0xf5f5f5 })); top.position.set(-s, s * .6, 0); g.add(hull, top); g.position.set(x, .01, z); this.root.add(g); this.ships.push({ g, cx: x, cz: z, r: s * (2 + R() * 6), a: R() * 6.28, sp: .1 + R() * .15 }); } }
   addClouds(R) { const m = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: .55, roughness: 1 }); for (let i = 0; i < 6; i++) { const g = new THREE.Group(); for (let j = 0; j < 4; j++) { const s = new THREE.Mesh(new THREE.SphereGeometry(this.diag * (.02 + R() * .03), 10, 8), m); s.position.set(j * this.diag * .03, R() * this.diag * .01, R() * this.diag * .02); s.scale.y = .45; g.add(s); } g.position.set((R() - .5) * this.W * 1.4, this.diag * .22 + R() * this.diag * .08, (R() - .5) * this.H * 1.4); this.root.add(g); this.clouds.push(g); } }
@@ -126,7 +147,7 @@ export class Country3D {
   }
   addTile(z, x, y, xRaw, id) {
     const n = Math.pow(2, z), G = 14, lon0 = xRaw / n * 360 - 180, lon1 = (xRaw + 1) / n * 360 - 180, my = (yy) => Math.atan(Math.sinh(Math.PI * (1 - 2 * yy / n))) / D2R;
-    const geo = new THREE.PlaneGeometry(1, 1, G, G), P = geo.attributes.position, uv = geo.attributes.uv, eps = Math.max(.004, this.diag * .0006);
+    const geo = new THREE.PlaneGeometry(1, 1, G, G), P = geo.attributes.position, uv = geo.attributes.uv, eps = Math.max(.0008, this.diag * .00003);
     for (let i = 0; i < P.count; i++) { const u = (i % (G + 1)) / G, v = Math.floor(i / (G + 1)) / G, lon = lon0 + u * (lon1 - lon0), lat = my(y + v); P.setXYZ(i, this.px(lon, lat), Math.max(0, this.hgt(lon, lat).h) + eps, this.pz(lat)); uv.setXY(i, u, 1 - v); }
     geo.computeVertexNormals(); const mat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }); const mesh = new THREE.Mesh(geo, mat); mesh.renderOrder = 2; mesh.visible = false; this.detail.add(mesh); const t = { mesh, loaded: false }; this.dtiles.set(id, t);
     const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => { if (this.disposed || !this.dtiles.has(id)) return; const tex = new THREE.Texture(im); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; tex.needsUpdate = true; mat.map = tex; mat.needsUpdate = true; t.loaded = true; mesh.visible = true; }; im.onerror = () => {};
@@ -139,11 +160,12 @@ export class Country3D {
     if (this.bump) { this.bump.offset.x += dt * .01; this.bump.offset.y += dt * .006; }
     for (const s of this.ships) { s.a += s.sp * dt; s.g.position.set(s.cx + Math.cos(s.a) * s.r, .012 + Math.sin(this.t * 1.3 + s.cx) * .004, s.cz + Math.sin(s.a) * s.r); s.g.rotation.y = -s.a - Math.PI / 2; }
     for (const c of this.clouds) { c.position.x += dt * this.diag * .004; if (c.position.x > this.W * .9) c.position.x = -this.W * .9; }
-    if (this.mode === '3d') { const day = .5 + .5 * Math.sin(this.t * .08); this.hemi.intensity = .35 + day * .65; this.sun.intensity = .3 + day * 1.9; const bg = new THREE.Color(0x050b12).lerp(new THREE.Color(0x7fb6e6), day); this.scene.background.copy(bg); this.scene.fog.color.copy(bg); this.scene.fog.near = this.diag * 1.2; this.scene.fog.far = this.diag * 4.5; if (this.cityMat) this.cityMat.emissiveIntensity = Math.max(0, 1 - day * 2.2) * 1.4; }
+    if (this.mode === '3d') { const day = .5 + .5 * Math.sin(this.t * .08); this.hemi.intensity = .35 + day * .65; this.sun.intensity = .3 + day * 1.9; const bg = new THREE.Color(0x050b12).lerp(new THREE.Color(0x7fb6e6), day); this.scene.background.copy(bg); this.scene.fog.color.copy(bg); this.scene.fog.near = this.diag * 1.2; this.scene.fog.far = this.diag * 4.5; const nt = Math.max(0, 1 - day * 2.2) * 1.2; for (const m of kit.nightMats) m.emissiveIntensity = nt; }
     else { this.hemi.intensity = 1; this.scene.background.set(0x2a070d); this.scene.fog.color.set(0x2a070d); this.scene.fog.near = this.diag * 20; this.scene.fog.far = this.diag * 40; }
     this.dt = (this.dt || 0) + dt; if (this.dt > .25) { this.dt = 0; this.updateDetail(); }
-    const f = this.dFactor || 0; const bright = this.mode === '3d' ? .55 + .45 * (.5 + .5 * Math.sin(this.t * .08)) : 1; for (const t of this.dtiles) { const m = t[1].mesh.material; m.opacity += ((t[1].loaded ? f : 0) - m.opacity) * Math.min(1, dt * 6); m.color.setScalar(bright); }
-    if (this.cityInst) this.cityInst.visible = f < .35; for (const c of this.clouds) c.visible = f < .2;
+    const f = this.dFactor || 0; const bright = this.mode === '3d' ? .4 + .4 * (.5 + .5 * Math.sin(this.t * .08)) : 1; for (const t of this.dtiles) { const m = t[1].mesh.material; m.opacity += ((t[1].loaded ? f * (this.mode === '3d' ? .88 : 1) : 0) - m.opacity) * Math.min(1, dt * 6); m.color.setScalar(bright); }
+    const near = this.cam.position.distanceTo(this.controls.target) < this.diag * .3; if (this.pins) this.pins.visible = !near;
+    for (const c of this.cars) { c.t += dt * c.sp * c.dir; const h2 = c.span / 2; if (c.t > h2) c.t = -h2; if (c.t < -h2) c.t = h2; const off = .2 * c.dir; if (c.axis === 0) { c.car.position.set(c.t, .15, c.line + off); c.car.rotation.y = c.dir > 0 ? 0 : Math.PI; } else { c.car.position.set(c.line - off, .15, c.t); c.car.rotation.y = c.dir > 0 ? -Math.PI / 2 : Math.PI / 2; } } for (const c of this.clouds) c.visible = f < .2; if (this.treesMesh) this.treesMesh.visible = f < .45;
     this.controls.update(); this.renderer.render(this.scene, this.cam);
   }
   dispose() { this.disposed = true; clearTimeout(this.dprune); cancelAnimationFrame(this.raf); this.ro.disconnect(); this.controls.dispose(); this.clear(); this.bump?.dispose(); this.renderer.dispose(); this.renderer.domElement.remove(); }
