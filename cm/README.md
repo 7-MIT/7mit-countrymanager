@@ -28,3 +28,6 @@ insert into public.cm_admins (email) values ('email-owner@contoh.com');
 - Klaim presiden terikat sesi tab (ID acak di memori), lepas otomatis saat tab ditutup/dimuat ulang (+ TTL 45 dtk tanpa heartbeat).
 - Dataset ±245 negara/teritori dihasilkan `tools/gen-data.mjs` (nilai awal simulasi, dunia mulai 1980).
 - Mesin simulasi murni: `supabase/functions/cm-api/engine.ts`. Salinan di repo ini sedikit berbeda secara kosmetik dari yang ter-deploy; versi ter-deploy adalah acuan.
+
+## Fungsi tambahan `cm-extra`
+Komentar sosial (`comments`, `comment_create`, `comment_delete`, `comment_hide`) dan pembangunan wilayah (`builds`, `build_place`, `road_place` untuk tol/raya/kota/rel, `build_remove`). Tabel: `cm_comments`, `cm_builds`. Kode sumbernya saat ini hanya ada di fungsi yang ter-deploy di Supabase (belum disalin ke repo).

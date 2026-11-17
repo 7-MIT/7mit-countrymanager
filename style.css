@@ -175,3 +175,13 @@ tr.click:hover{background:rgba(255,255,255,.06)}
 .bar{background:rgba(255,255,255,.1)}
 .ship{background:#ffe3d2;box-shadow:0 0 10px #f3b04a}
 .up{color:var(--good)}.down{color:var(--bad)}
+
+.av{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;flex:none;background:rgba(255,227,210,.14);border:1px solid var(--line);font-weight:700;font-family:Lora,serif;color:var(--blush)}
+.av.pres{background:linear-gradient(135deg,#a01d2d,#7a1424);border-color:rgba(233,184,160,.6);color:#fff}
+.thread{margin-top:10px;padding:10px 12px;border-radius:14px;background:rgba(42,7,13,.55);border:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.cmt{display:flex;gap:10px;align-items:flex-start}.cmt .av{width:30px;height:30px;font-size:13px}
+.cmt.pres{padding:8px;border-radius:12px;background:rgba(160,29,45,.22);border:1px solid rgba(233,184,160,.28)}
+.bgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.bgrid button{padding:9px 6px;border-radius:14px;background:rgba(42,7,13,.55);border:1px solid var(--line);font-size:12px;line-height:1.3;text-align:center;transition:.15s}
+.bgrid button:hover{background:rgba(255,227,210,.14)}.bgrid button.sel{border-color:var(--acc);background:rgba(255,227,210,.18)}
+.bgrid button small{color:var(--warn)}

@@ -44,12 +44,13 @@ export function modal({ title, icon, body = '', actions = [], wide }) {
 export function closeModal() { const m = $('#modal'); m.classList.add('hidden'); m.innerHTML = ''; }
 
 // ---------- API ----------
+const EXTRA = new Set(['builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
 export async function api(action, body = {}, { quiet = false, keepalive = false } = {}) {
   const { data: ses } = await sb.auth.getSession();
   const token = ses?.session?.access_token; if (!token) throw new Error('Sesi login berakhir. Silakan masuk lagi.');
   let res;
   try {
-    res = await fetch(`${SB_URL}/functions/v1/cm-api`, { method: 'POST', keepalive, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY }, body: JSON.stringify({ action, session: SESSION, ...body }) });
+    res = await fetch(`${SB_URL}/functions/v1/${EXTRA.has(action) ? 'cm-extra' : 'cm-api'}`, { method: 'POST', keepalive, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: SB_KEY }, body: JSON.stringify({ action, session: SESSION, ...body }) });
   } catch (e) { S.online = false; throw new Error('Tidak dapat terhubung ke server'); }
   let j = null; try { j = await res.json(); } catch (e) {}
   if (!res.ok || !j?.ok) { const msg = j?.error || j?.message || `Kesalahan server (${res.status})`; if (res.status === 401) { S.online = false; } if (!quiet) toast(msg, 'err'); const err = new Error(msg); err.status = res.status; err.handled = !quiet; throw err; }

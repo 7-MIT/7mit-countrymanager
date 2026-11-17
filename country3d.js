@@ -20,8 +20,8 @@ export async function loadOutline(code) {
   const total = rings.reduce((a, r) => a + r.length, 0), step = Math.max(1, Math.floor(total / 6000));
   rings = rings.map(r => { const o = r.filter((_, i) => i % step === 0); if (o.length < 3 && r.length >= 3) return r.slice(0, 3); return o; }).filter(r => r.length >= 3);
   let minLon = 1e9, maxLon = -1e9; rings.forEach(r => r.forEach(p => { minLon = Math.min(minLon, p[0]); maxLon = Math.max(maxLon, p[0]); }));
-  if (maxLon - minLon > 180) rings = rings.map(r => r.map(p => [p[0] < 0 ? p[0] + 360 : p[0], p[1]]));
-  return { rings, area: meta[1] };
+  let shifted = false; if (maxLon - minLon > 180) { shifted = true; rings = rings.map(r => r.map(p => [p[0] < 0 ? p[0] + 360 : p[0], p[1]])); }
+  return { rings, area: meta[1], shifted };
 }
 
 export class Country3D {
@@ -33,6 +33,10 @@ export class Country3D {
     this.cam = new THREE.PerspectiveCamera(45, w / h, 0.05, 5000);
     this.hemi = new THREE.HemisphereLight(0xbfe3ff, 0x5a6b50, .9); this.sun = new THREE.DirectionalLight(0xfff1d6, 2.1); this.scene.add(this.hemi, this.sun);
     this.controls = new OrbitControls(this.cam, this.renderer.domElement); Object.assign(this.controls, { enableDamping: true, dampingFactor: .08, maxPolarAngle: 1.5, rotateSpeed: .6, zoomSpeed: .8, panSpeed: .8 });
+    this.ray = new THREE.Raycaster(); this.ptr = new THREE.Vector2(); this.down = null; const el = this.renderer.domElement;
+    el.addEventListener('pointerdown', (e) => { this.down = [e.clientX, e.clientY]; });
+    el.addEventListener('pointerup', (e) => { if (this.down && Math.hypot(e.clientX - this.down[0], e.clientY - this.down[1]) < 5) { const pt = this.pickPoint(e); if (pt) this.onClick?.(pt); } this.down = null; });
+    el.addEventListener('pointermove', (e) => { if (e.buttons) return; const pt = this.pickPoint(e); this.onHover?.(pt, e); });
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(host);
     this.prep(); this.build(); this.last = performance.now(); this.loop = this.loop.bind(this); this.raf = requestAnimationFrame(this.loop);
   }
@@ -59,7 +63,7 @@ export class Country3D {
     return { h, land, m: sft, n, n2, coast: inland };
   }
   maskAt(lon, lat) { const N = this.N, u = (lon - this.b.minLon) / (this.b.maxLon - this.b.minLon), v = 1 - (lat - this.b.minLat) / (this.b.maxLat - this.b.minLat); const x = Math.min(N - 1, Math.max(0, Math.floor(u * N))), y = Math.min(N - 1, Math.max(0, Math.floor(v * N))); return this.mask[y * N + x]; }
-  clear() { if (this.root) { this.scene.remove(this.root); this.root.traverse(o => { o.geometry?.dispose?.(); const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach(x => { x.map?.dispose?.(); x.bumpMap?.dispose?.(); x.dispose?.(); }); }); } this.root = new THREE.Group(); this.scene.add(this.root); this.ships = []; this.clouds = []; this.water = null; this.cityInst = null; this.cities = []; this.cars = []; this.pins = null; this.detail = new THREE.Group(); this.root.add(this.detail); this.dtiles = new Map(); this.dkey = ''; }
+  clear() { if (this.root) { this.scene.remove(this.root); this.root.traverse(o => { o.geometry?.dispose?.(); const m = o.material; if (m) (Array.isArray(m) ? m : [m]).forEach(x => { x.map?.dispose?.(); x.bumpMap?.dispose?.(); x.dispose?.(); }); }); } this.root = new THREE.Group(); this.scene.add(this.root); this.bmap = null; this.bgroup = null; this.regionLines = null; this.prev = null; this.roadCars = []; this.anims = []; this.ships = []; this.clouds = []; this.water = null; this.cityInst = null; this.cities = []; this.cars = []; this.pins = null; this.detail = new THREE.Group(); this.root.add(this.detail); this.dtiles = new Map(); this.dkey = ''; }
   async build() {
     this.clear(); const root = this.root, SEG = 200, b = this.b, seed = hash(this.code), R = rng(seed), is3 = this.mode === '3d';
     const geo = new THREE.PlaneGeometry(1, 1, SEG, SEG); geo.rotateX(-Math.PI / 2); const P = geo.attributes.position, cols = new Float32Array(P.count * 3), uv = geo.attributes.uv;
@@ -153,6 +157,48 @@ export class Country3D {
     const im = new Image(); im.crossOrigin = 'anonymous'; im.onload = () => { if (this.disposed || !this.dtiles.has(id)) return; const tex = new THREE.Texture(im); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; tex.needsUpdate = true; mat.map = tex; mat.needsUpdate = true; t.loaded = true; mesh.visible = true; }; im.onerror = () => {};
     im.src = this.mapbox ? `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${x}/${y}?access_token=${this.mapbox}` : `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
   }
+  // ---- pembangunan & wilayah ----
+  pickPoint(e) { if (!this.terrain) return null; const r = this.renderer.domElement.getBoundingClientRect(); this.ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); this.ray.setFromCamera(this.ptr, this.cam); const h = this.ray.intersectObject(this.terrain, false)[0]; if (!h) return null; const [lon, lat] = this.lonLatAt(h.point.x, h.point.z); if (!this.hgt(lon, lat).land) return null; return { lon, lat, x: h.point.x, y: h.point.y, z: h.point.z }; }
+  setRegions(feats) {
+    if (this.regionLines) { this.root.remove(this.regionLines); this.regionLines.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); } this.regions = feats || []; this.regionLines = new THREE.Group(); this.root.add(this.regionLines);
+    const m = new THREE.LineBasicMaterial({ color: 0xffe3d2, transparent: true, opacity: .55 });
+    for (const f of this.regions) for (const r of f.rings) { const step = Math.max(1, Math.floor(r.length / 260)), pts = []; for (let i = 0; i < r.length; i += step) { const [lo, la] = r[i]; pts.push(new THREE.Vector3(this.px(lo, la), Math.max(0, this.hgt(lo, la).h) + Math.max(.01, this.diag * .0004), this.pz(la))); } if (pts.length > 2) this.regionLines.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), m)); }
+    this.regionLines.visible = true;
+  }
+  regionAt(lon, lat, feats) { for (const f of feats || this.regions || []) { if (lon < f.bb[0] || lon > f.bb[2] || lat < f.bb[1] || lat > f.bb[3]) continue; for (const r of f.rings) { let inside = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1]; if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside; } if (inside) return f.name; } } return null; }
+  gridRegions(n = 8) { const b = this.b, out = []; const dl = (b.maxLon - b.minLon) / n, da = (b.maxLat - b.minLat) / n; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { const lo0 = b.minLon + i * dl, la0 = b.maxLat - (j + 1) * da; if (!this.hgt(lo0 + dl / 2, la0 + da / 2).land) continue; out.push({ name: `Zona ${String.fromCharCode(65 + j)}${i + 1}`, bb: [lo0, la0, lo0 + dl, la0 + da], rings: [[[lo0, la0], [lo0 + dl, la0], [lo0 + dl, la0 + da], [lo0, la0 + da]]] }); } return out; }
+  modelFor(kind) { return { rumah: ['housing', 1], sekolah: ['school', 1], rs: ['hospital', 1], pabrik: ['factory', 1], pertanian: ['farm', 1], listrik: ['solar', 2], pelabuhan: ['port', 1], bandara: ['airport', 1], pasar: ['housing', 2], taman: ['park', 1], teknologi: ['techhub', 1], kantor: ['anticorr', 1] }[kind] || ['housing', 1]; }
+  setBuilds(list, firstLoad) {
+    this.bmap = this.bmap || new Map(); this.bgroup = this.bgroup || (() => { const g = new THREE.Group(); this.root.add(g); return g; })(); if (!this.roadCars) this.roadCars = []; if (!this.anims) this.anims = [];
+    const ids = new Set(list.map(b => b.id)); for (const [id, o] of this.bmap) if (!ids.has(id)) { this.bgroup.remove(o.obj); this.bmap.delete(id); this.roadCars = this.roadCars.filter(c => c.bid !== id); }
+    const sc = (this.sc || Math.max(.0035, Math.min(this.diag * .0011, .12)) / 4) * 1.5;
+    for (const b of list) { if (this.bmap.has(b.id)) continue; const fresh = !firstLoad && Date.now() - new Date(b.ts).getTime() < 30000; let obj;
+      if (b.path) obj = this.makeRoad(b, fresh);
+      else { const h = this.hgt(b.lng, b.lat).h; obj = new THREE.Group(); obj.position.set(this.px(b.lng, b.lat), Math.max(.02, h) + sc * 1.2, this.pz(b.lat)); const inner = new THREE.Group(); inner.scale.setScalar(sc); const [t, lv] = this.modelFor(b.kind); const pad = new THREE.Mesh(new THREE.BoxGeometry(4.1, .16, 4.1), new THREE.MeshStandardMaterial({ color: 0xbfc4c9, roughness: .9 })); pad.position.y = -.08; inner.add(pad); makeBuilding(t, lv, inner, { outward: 0 }); obj.add(inner); if (fresh) { inner.scale.set(sc, sc * .04, sc); const site = new THREE.Group(); site.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(3.7, 5, 3.7)), new THREE.LineBasicMaterial({ color: 0xffc533 }))); site.children[0].position.y = 2.5; const mast = new THREE.Mesh(new THREE.BoxGeometry(.18, 6.5, .18), new THREE.MeshStandardMaterial({ color: 0xf6b800 })); mast.position.set(1.75, 3.25, 1.75); const jib = new THREE.Mesh(new THREE.BoxGeometry(4.6, .14, .14), new THREE.MeshStandardMaterial({ color: 0xf6b800 })); jib.position.set(-.5, 6.5, 1.75); site.add(mast, jib); site.scale.setScalar(sc); obj.add(site); this.anims.push({ t: 0, inner, site, sc, jib }); } }
+      this.bgroup.add(obj); this.bmap.set(b.id, { obj, b }); }
+  }
+  makeRoad(b, fresh) {
+    const pts = [], P = b.path, ey = Math.max(.006, this.diag * .0005);
+    for (let i = 0; i < P.length - 1; i++) { const [la0, lo0] = P[i], [la1, lo1] = P[i + 1], n = Math.max(2, Math.ceil(Math.hypot(this.px(lo1, la1) - this.px(lo0, la0), this.pz(la1) - this.pz(la0)) / Math.max(.015, this.diag * .003))); for (let k = 0; k < n; k++) { const t = k / n, lo = lo0 + (lo1 - lo0) * t, la = la0 + (la1 - la0) * t; pts.push(new THREE.Vector3(this.px(lo, la), Math.max(.015, this.hgt(lo, la).h) + ey, this.pz(la))); } }
+    const [laE, loE] = P[P.length - 1]; pts.push(new THREE.Vector3(this.px(loE, laE), Math.max(.015, this.hgt(loE, laE).h) + ey, this.pz(laE)));
+    const ST = { tol: { w: 1.8, col: 0x1f2227, stripe: 0x4aa3ff, cars: 5, sp: 1.9 }, raya: { w: 1.25, col: 0x34363b, stripe: 0xfdd835, cars: 3, sp: 1 }, jalan: { w: .8, col: 0x4a4d52, stripe: 0xffffff, cars: 2, sp: .7 }, rel: { w: 1, col: 0x8c8f94, stripe: 0, cars: 0, sp: 1.2 } }, st = ST[b.kind] || ST.jalan, base = Math.max(.005, this.diag * .0011), rad = base * st.w, g = new THREE.Group();
+    const curve = new THREE.CatmullRomCurve3(pts), seg = Math.min(900, pts.length * 3), len = curve.getLength(); const tan = (t) => curve.getTangent(Math.min(.999, t));
+    if (b.kind === 'rel') {
+      const metal = new THREE.MeshStandardMaterial({ color: 0xb9bdc4, metalness: .7, roughness: .35 }), off = rad * .75;
+      for (const side of [-1, 1]) { const op = pts.map((p, i) => { const t = tan(i / (pts.length - 1)), l = new THREE.Vector3(-t.z, 0, t.x).normalize().multiplyScalar(off * side); return p.clone().add(l).add(new THREE.Vector3(0, rad * .3, 0)); }); g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(op), seg, rad * .17, 5), metal)); }
+      const nS = Math.min(700, Math.max(2, Math.floor(len / (rad * 2.4)))), sl = new THREE.InstancedMesh(new THREE.BoxGeometry(rad * 2.6, rad * .16, rad * .4), new THREE.MeshStandardMaterial({ color: 0x5b4636, roughness: 1 }), nS), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+      for (let i = 0; i < nS; i++) { const t = i / nS, p = curve.getPoint(t), tg = tan(t); q.setFromUnitVectors(new THREE.Vector3(1, 0, 0), new THREE.Vector3(tg.x, 0, tg.z).normalize()); m4.compose(p.clone().add(new THREE.Vector3(0, rad * .08, 0)), q.clone().multiply(new THREE.Quaternion().setFromAxisAngle(up, Math.PI / 2)), new THREE.Vector3(1, 1, 1)); sl.setMatrixAt(i, m4); } g.add(sl);
+      const tc = [0x1e88e5, 0xf5f5f5, 0xf5f5f5, 0xe53935], gap = rad * 3.6 / Math.max(.01, len), t0 = Math.random();
+      for (let k = 0; k < 4; k++) { const car = new THREE.Mesh(new THREE.BoxGeometry(rad * 3.2, rad * 1.5, rad * 1.5), new THREE.MeshStandardMaterial({ color: tc[k], metalness: .4, roughness: .4 })); g.add(car); this.roadCars.push({ bid: b.id, car, curve, t: ((t0 - k * gap) % 1 + 1) % 1, sp: st.sp / Math.max(1, len) * 1.2, rad, lift: rad * 1.05, train: true }); }
+    } else {
+      g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, seg, rad, 6), new THREE.MeshStandardMaterial({ color: st.col, roughness: .9 })));
+      const line = new THREE.Mesh(new THREE.TubeGeometry(curve, seg, rad * .2, 4), new THREE.MeshBasicMaterial({ color: st.stripe })); line.position.y = rad * .55; g.add(line);
+      if (b.kind === 'tol') for (const sd of [-1, 1]) { const op = pts.map((p, i) => { const t = tan(i / (pts.length - 1)); return p.clone().add(new THREE.Vector3(-t.z, 0, t.x).normalize().multiplyScalar(rad * .85 * sd)).add(new THREE.Vector3(0, rad * .5, 0)); }); g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(op), seg, rad * .1, 4), new THREE.MeshBasicMaterial({ color: 0xffffff }))); }
+      const cols = [0xe53935, 0x1e88e5, 0xfdd835, 0xffffff, 0x43a047]; for (let k = 0; k < st.cars; k++) { const car = new THREE.Mesh(new THREE.BoxGeometry(rad * 2.2, rad * 1, rad * 1.1), new THREE.MeshStandardMaterial({ color: cols[k % 5] })); g.add(car); this.roadCars.push({ bid: b.id, car, curve, t: Math.random(), sp: (.025 + Math.random() * .03) * st.sp * (k % 2 ? -1 : 1), rad, lift: rad * .9 }); }
+    }
+    if (fresh) { this.anims = this.anims || []; this.anims.push({ road: g, t: 0 }); } return g;
+  }
+  setPreview(pts) { if (this.prev) { this.root.remove(this.prev); this.prev.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); this.prev = null; } if (!pts?.length) return; const g = new THREE.Group(), v = pts.map(([la, lo]) => new THREE.Vector3(this.px(lo, la), Math.max(.02, this.hgt(lo, la).h) + Math.max(.02, this.diag * .002), this.pz(la))); v.forEach(p => { const m = new THREE.Mesh(new THREE.SphereGeometry(Math.max(.012, this.diag * .0025), 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd166 })); m.position.copy(p); g.add(m); }); if (v.length > 1) g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(v), new THREE.LineBasicMaterial({ color: 0xffd166 }))); this.prev = g; this.root.add(g); }
   setMode(mode) { if (mode === this.mode) return; this.mode = mode; this.build(); }
   resize() { const w = this.host.clientWidth, h = this.host.clientHeight; if (!w || !h) return; this.renderer.setSize(w, h); this.cam.aspect = w / h; this.cam.updateProjectionMatrix(); }
   loop(now) {
@@ -166,6 +212,8 @@ export class Country3D {
     const f = this.dFactor || 0; const bright = this.mode === '3d' ? .4 + .4 * (.5 + .5 * Math.sin(this.t * .08)) : 1; for (const t of this.dtiles) { const m = t[1].mesh.material; m.opacity += ((t[1].loaded ? f * (this.mode === '3d' ? .88 : 1) : 0) - m.opacity) * Math.min(1, dt * 6); m.color.setScalar(bright); }
     const near = this.cam.position.distanceTo(this.controls.target) < this.diag * .3; if (this.pins) this.pins.visible = !near;
     for (const c of this.cars) { c.t += dt * c.sp * c.dir; const h2 = c.span / 2; if (c.t > h2) c.t = -h2; if (c.t < -h2) c.t = h2; const off = .2 * c.dir; if (c.axis === 0) { c.car.position.set(c.t, .15, c.line + off); c.car.rotation.y = c.dir > 0 ? 0 : Math.PI; } else { c.car.position.set(c.line - off, .15, c.t); c.car.rotation.y = c.dir > 0 ? -Math.PI / 2 : Math.PI / 2; } } for (const c of this.clouds) c.visible = f < .2; if (this.treesMesh) this.treesMesh.visible = f < .45;
+    if (this.anims) for (const a of this.anims) { a.t += dt; if (a.inner) { const k = Math.min(1, a.t / 3.2), e = 1 - Math.pow(1 - k, 3); a.inner.scale.set(a.sc, a.sc * Math.max(.04, e), a.sc); if (a.jib) a.jib.position.x = -.5 + Math.sin(a.t * 3) * .6; if (k >= 1) { a.site.visible = false; const p = Math.min(1, (a.t - 3.2) / .5), b = 1 + Math.sin(p * Math.PI) * .12; a.inner.scale.set(a.sc * b, a.sc * b, a.sc * b); if (p >= 1) { a.inner.scale.setScalar(a.sc); a.done = true; } } } else a.done = a.t > 1; } if (this.anims) this.anims = this.anims.filter(a => !a.done);
+    if (this.roadCars) for (const c of this.roadCars) { c.t = (c.t + dt * c.sp + 1) % 1; const p = c.curve.getPoint(c.t), q = c.curve.getPoint(Math.min(1, c.t + .004)); c.car.position.set(p.x, p.y + (c.lift || c.rad * .9), p.z); c.car.lookAt(q.x, q.y + (c.lift || c.rad * .9), q.z); }
     this.controls.update(); this.renderer.render(this.scene, this.cam);
   }
   dispose() { this.disposed = true; clearTimeout(this.dprune); cancelAnimationFrame(this.raf); this.ro.disconnect(); this.controls.dispose(); this.clear(); this.bump?.dispose(); this.renderer.dispose(); this.renderer.domElement.remove(); }

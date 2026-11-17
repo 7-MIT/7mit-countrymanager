@@ -80,7 +80,9 @@ async function loadMine(force) { if (!S.me?.president) { S.M = null; lastMine = 
 async function loadElections() { try { const r = await api('elections', {}, { quiet: true }); const latest = new Map(); r.elections.forEach(e => { const o = latest.get(e.country); if (!o || e.year > o.year) latest.set(e.country, e); }); S.elections = [...latest.values()]; if (S.page === 'map') { updateMapStyle(); } } catch (e) {} }
 async function loadNews(more) { const scope = S.filters.newsScope || 'all'; try { const r = await api('news', { country: scope === 'sel' ? S.sel : undefined, before: more && S.newsList?.length ? S.newsList[S.newsList.length - 1].id : undefined, limit: 40 }, { quiet: true }); S.newsList = more ? [...(S.newsList || []), ...r.news] : r.news; if (S.page === 'news') render(); } catch (e) { S.newsList = S.newsList || []; if (S.page === 'news') render(); } }
 export async function reload() { await Promise.all([sync(true), loadSel(true), loadMine(true)]); }
-hooks.reload = reload; hooks.loadSel = loadSel; hooks.loadMine = loadMine;
+hooks.reload = reload; hooks.loadSel = loadSel;
+async function loadComments() { try { const r = await api('comments', { country: S.sel }, { quiet: true }); const j = JSON.stringify(r.comments); if (j !== S._cj) { S._cj = j; S.cmts = r.comments; if (S.page === 'social') softRender(); } } catch (e) {} }
+hooks.loadComments = loadComments; hooks.loadMine = loadMine;
 
 function pushNotif(n) { if (S.notifs.some(x => x.id === n.id)) return; S.notifs.unshift({ ...n, read: false, ts: n.ts || new Date().toISOString() }); S.notifs = S.notifs.slice(0, 60); if ('Notification' in window && Notification.permission === 'granted' && document.hidden) { try { new Notification(n.title, { body: n.body || '' }); } catch (e) {} } }
 let syncing = false, syncTimer = null;
@@ -105,7 +107,7 @@ export async function sync(force) {
     updateChrome(); softRender();
   } catch (e) { S.online = false; updateConn(); } finally { syncing = false; }
 }
-function queueSync() { clearTimeout(syncTimer); syncTimer = setTimeout(async () => { await sync(true); loadSel(); loadMine(); if (S.page === 'news') loadNews(); }, 450); }
+function queueSync() { clearTimeout(syncTimer); syncTimer = setTimeout(async () => { await sync(true); loadSel(); loadMine(); if (S.page === 'news') loadNews(); if (S.page === 'social') loadComments(); if (S.page === 'land') reloadBuilds(); }, 450); }
 
 async function subscribeRealtime() {
   try { await sb.realtime.setAuth(); if (S.ch) await sb.removeChannel(S.ch); S.ch = sb.channel('cm-world', { config: { private: true, broadcast: { self: false } } }).on('broadcast', { event: 'change' }, queueSync).subscribe((s) => { S.rt = s === 'SUBSCRIBED'; updateConn(); }); } catch (e) { S.rt = false; }
@@ -137,11 +139,50 @@ function initMap() {
 hooks.initMap = initMap;
 let LAND = null, landToken = 0;
 function destroyLand() { landToken++; if (LAND) { LAND.dispose(); LAND = null; } }
+const LKINDS = [['rumah', 'house', 'Perumahan', 1.2], ['sekolah', 'school', 'Sekolah', 1.5], ['rs', 'hospital', 'Rumah Sakit', 2.2], ['pabrik', 'factory', 'Pabrik', 3], ['pertanian', 'wheat', 'Pertanian', 1], ['listrik', 'zap', 'Pembangkit', 3.5], ['pelabuhan', 'anchor', 'Pelabuhan', 5], ['bandara', 'plane', 'Bandara', 8], ['pasar', 'store', 'Pasar', .8], ['taman', 'trees', 'Taman', .5], ['teknologi', 'cpu', 'Pusat Teknologi', 4], ['kantor', 'landmark', 'Kantor Pemerintah', 1.8]];
+const ROADK = [['tol', 'route', 'Jalan Tol', .05], ['raya', 'signpost', 'Jalan Raya', .025], ['jalan', 'road', 'Jalan Kota', .012], ['rel', 'train-front', 'Rel Kereta', .08]];
+const isRoad = (k) => ROADK.some(x => x[0] === k);
+const LLEVELS = [['adm1', 'Provinsi'], ['adm2', 'Kab/Kota'], ['adm3', 'Kecamatan'], ['zona', 'Zona']];
+S.land = S.land || { mode: 'jelajah', road: 'raya', kind: 'rumah', level: 'adm1', pts: [], regs: {}, builds: [] };
+const kmBetween = (a, b) => { const R = 6371, r = Math.PI / 180, x = (b[0] - a[0]) * r, y = (b[1] - a[1]) * r, h = Math.sin(x / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(y / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+const roadKm = () => { let k = 0; const p = S.land.pts; for (let i = 1; i < p.length; i++) k += kmBetween(p[i - 1], p[i]); return k; };
+const costScale = () => Math.max(.05, (S.M?.country?.gdp || 500) / 500);
+function regNames(pt) { const o = {}, L = S.land; for (const [k] of LLEVELS) { const f = L.regs[k]; if (f) { const n = LAND?.regionAt(pt.lon, pt.lat, f); if (n) o[k] = n; } } return o; }
+function landHud() {
+  const el = $('#landHud'); if (!el) return; const L = S.land, mine = S.me?.president === S.sel, cs = costScale(), km = roadKm(), counts = {}; L.builds.forEach(b => counts[b.kind] = (counts[b.kind] || 0) + 1);
+  const tabs = (items, cur, act, key) => `<div class="tabs">${items.map(([v, t, i]) => `<button class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${i ? ic(i) + ' ' : ''}${t}</button>`).join('')}</div>`;
+  el.innerHTML = `<div class="grid g2"><div class="card"><h3>${ic('hammer')} ${mine ? 'Bangun di Wilayah' : 'Pembangunan'}</h3>
+   ${mine ? `${tabs([['jelajah', 'Jelajah', 'mouse-pointer-2'], ['gedung', 'Bangun gedung', 'building-2'], ['jalan', 'Bangun jalan & rel', 'route']], L.mode, 'landSet')}<div class="sub" style="margin:10px 0 6px">Tingkat wilayah (garis batas pada peta)</div>${tabs(LLEVELS, L.level, 'landLevel')}` : `<div class="banner info">${ic('info')}<div>Hanya presiden negara ini yang dapat membangun. Anda dapat melihat semua proyek di peta.</div></div><div class="sub" style="margin-top:8px">Tingkat wilayah</div>${tabs(LLEVELS, L.level, 'landLevel')}`}
+   <div class="item" style="margin-top:12px"><div class="sub">${ic('map-pin')} Wilayah</div><b id="landInfo">Arahkan kursor ke daratan…</b></div>
+   ${mine && L.mode === 'gedung' ? `<div class="sub" style="margin:12px 0 6px">Pilih jenis bangunan lalu klik daratan di peta (biaya dalam miliar USD)</div><div class="bgrid">${LKINDS.map(([k, i, n, b]) => `<button class="${L.kind === k ? 'sel' : ''}" data-act="landKind" data-v="${k}">${ic(i)}<br>${n}<br><small>${usd(b * cs)}</small></button>`).join('')}</div>` : ''}
+   ${mine && L.mode === 'jalan' ? `<div class="item" style="margin-top:12px"><b>Bangun jalur</b><div class="bgrid" style="margin:8px 0">${ROADK.map(([k, i, n, c]) => `<button class="${L.road === k ? 'sel' : ''}" data-act="roadKind" data-v="${k}">${ic(i)}<br>${n}<br><small>${usd(c * cs)}/km</small></button>`).join('')}</div><div class="sub">Klik titik-titik di peta untuk membuat rute. Titik: ${L.pts.length} · Panjang ±${fmt(km, 1)} km · Biaya ±${usd(ROADK.find(x => x[0] === L.road)[3] * km * cs)}</div><div class="row wrap" style="margin-top:8px"><button class="btn sm pri" data-act="roadDone" ${L.pts.length < 2 ? 'disabled' : ''}>${ic('check')} Selesai & bangun</button><button class="btn sm" data-act="roadUndo" ${L.pts.length ? '' : 'disabled'}>${ic('undo-2')} Hapus titik</button><button class="btn sm red" data-act="roadCancel">${ic('x')} Batal</button></div></div>` : ''}
+  </div><div class="card"><h3>${ic('list')} Proyek ${esc(cty(S.sel)?.name || '')} (${L.builds.length})</h3>${L.builds.length ? `<div class="scroll" style="max-height:300px"><div class="stack">${[...L.builds].reverse().slice(0, 60).map(b => { const k = LKINDS.find(x => x[0] === b.kind); const rd = ROADK.find(x => x[0] === b.kind); return `<div class="item row between wrap"><div>${ic(rd ? rd[1] : (k?.[1] || 'building'))} <b>${rd ? `${rd[2]} ${b.km} km` : esc(k?.[2] || b.kind)}</b><div class="sub">${esc(Object.values(b.region || {}).reverse().join(', ') || 'Wilayah tak tercatat')} · ${usd(+b.cost)} · tahun ${b.year}</div></div>${mine ? `<button class="btn sm red" data-act="buildDel" data-id="${b.id}">${ic('trash-2')}</button>` : ''}</div>`; }).join('')}</div></div>` : `<div class="empty">${ic('hammer')}<div>Belum ada proyek.${mine ? ' Mulai bangun jalan atau gedung!' : ''}</div></div>`}</div></div>`;
+  refreshIcons();
+}
+async function reloadBuilds(first) { if (S.page !== 'land') return; try { const r = await api('builds', { country: S.sel }, { quiet: true }); S.land.builds = r.builds; LAND?.setBuilds(r.builds, !!first); landHud(); } catch (e) {} }
+async function loadRegions(level) {
+  const L = S.land; if (!LAND) return; if (L.regs[level]) { LAND.setRegions(L.regs[level]); return; }
+  if (level === 'zona') { L.regs.zona = LAND.gridRegions(); LAND.setRegions(L.regs.zona); return; }
+  const c = cty(S.sel), cca3 = (AREAS[c.code]?.[0] || '').toUpperCase(), lv = level.toUpperCase(), token = landToken;
+  try {
+    const meta = await (await fetch(`https://www.geoboundaries.org/api/current/gbOpen/${cca3}/${lv}/`)).json(); const url = meta.simplifiedGeometryGeoJSON || meta.gjDownloadURL; const rawUrl = url.replace(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/raw\/(.+)$/, 'https://raw.githubusercontent.com/$1/$2/$3'); let txt = await (await fetch(rawUrl)).text();
+    if (txt.startsWith('version https://git-lfs')) { const m = url.match(/github\.com\/([^/]+)\/([^/]+)\/raw\/([^/]+)\/(.+)$/); if (m) txt = await (await fetch(`https://media.githubusercontent.com/media/${m[1]}/${m[2]}/${m[3]}/${m[4]}`)).text(); }
+    if (token !== landToken) return; const gj = JSON.parse(txt), shift = LAND.outline.shifted, feats = [];
+    for (const f of gj.features) { const g = f.geometry; const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates; const rings = polys.map(p => { let r = p[0]; const step = Math.max(1, Math.floor(r.length / 400)); r = r.filter((_, i) => i % step === 0); return shift ? r.map(q => [q[0] < 0 ? q[0] + 360 : q[0], q[1]]) : r; }); let bb = [1e9, 1e9, -1e9, -1e9]; rings.forEach(r => r.forEach(q => { bb = [Math.min(bb[0], q[0]), Math.min(bb[1], q[1]), Math.max(bb[2], q[0]), Math.max(bb[3], q[1])]; })); feats.push({ name: f.properties.shapeName || f.properties.name || 'Wilayah', bb, rings }); }
+    if (!feats.length) throw new Error('kosong'); L.regs[level] = feats; LAND.setRegions(feats);
+  } catch (e) { toast('Batas wilayah tingkat ini tidak tersedia, memakai zona', 'warn'); L.level = 'zona'; await loadRegions('zona'); landHud(); }
+}
+function landClick(pt) {
+  const L = S.land, mine = S.me?.president === S.sel, rn = regNames(pt), label = Object.values(rn).reverse().join(', ') || 'Wilayah';
+  if (L.mode === 'jalan' && mine) { L.pts.push([+pt.lat.toFixed(4), +pt.lon.toFixed(4)]); LAND.setPreview(L.pts); landHud(); return; }
+  if (L.mode === 'gedung' && mine) { const k = LKINDS.find(x => x[0] === L.kind), cost = k[3] * costScale(); modal({ title: `Bangun ${k[2]}?`, icon: k[1], body: `<p>Lokasi: <b>${esc(label)}</b></p><div class="item">Biaya <b>${usd(cost)}</b> dari kas ${usd(S.M?.country?.treasury || 0)}. Dampak langsung diterapkan ke indikator negara.</div>`, actions: [{ label: 'Bangun', icon: 'hammer', cls: 'pri', fn: () => act(null, 'build_place', { kind: L.kind, lat: pt.lat, lng: pt.lon, region: rn }, (r) => `${k[2]} dibangun (${usd(r.cost)})`, async () => { await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }) }, { label: 'Batal' }] }); return; }
+  const el = $('#landInfo'); if (el) el.textContent = label;
+}
 hooks.initLand = async () => {
   destroyLand(); const my = ++landToken, el = $('#land'), c = cty(S.sel); if (!el || !c) return; const msg = $('#landMsg');
   try {
     const outline = await loadOutline(c.code); if (my !== landToken) return;
-    LAND = new Country3D(el, { code: c.code, name: c.name, lat: c.lat, lng: c.lng, outline, mode: S.landMode || '3d', mapbox: S.world.mapbox, onStatus: (t) => { if (msg) { msg.innerHTML = t ? `${ic('loader-circle', 'spin')} ${t}` : ''; msg.style.display = t ? '' : 'none'; refreshIcons(); } } }); LAND.pop = c.pop;
+    LAND = new Country3D(el, { code: c.code, name: c.name, lat: c.lat, lng: c.lng, outline, mode: S.landMode || '3d', mapbox: S.world.mapbox, onStatus: (t) => { if (msg) { msg.innerHTML = t ? `${ic('loader-circle', 'spin')} ${t}` : ''; msg.style.display = t ? '' : 'none'; refreshIcons(); } } }); LAND.pop = c.pop; S.land.pts = []; S.land.builds = []; S.land.regs = {}; LAND.onClick = landClick; LAND.onHover = (pt, e) => { const el = $('#landInfo'); if (!el) return; if (!pt) { el.textContent = 'Arahkan kursor ke daratan…'; return; } const rn = regNames(pt); el.textContent = Object.values(rn).reverse().join(', ') || 'Wilayah'; }; landHud(); loadRegions(S.land.level); reloadBuilds(true);
     const sc = $('#landScale'); if (sc) sc.innerHTML = `${ic('ruler')} Bentang ±${fmt(LAND.widthKm)} × ${fmt(LAND.heightKm)} km · 1 satuan = 100 km`; refreshIcons(); if (msg && (S.landMode || '3d') === '3d') msg.style.display = 'none';
   } catch (e) { if (msg) msg.innerHTML = `${ic('circle-alert')} ${esc(e.message || 'Gagal memuat wilayah')}`; refreshIcons(); }
 };
@@ -173,7 +214,15 @@ export function pick(code, fromMap) {
 // ================= ACTIONS =================
 const val = (id) => $('#' + id)?.value;
 const A = {
-  landMode: (el) => { S.landMode = el.dataset.v; if (LAND) { const m = $('#landMsg'); if (m) { m.style.display = ''; } LAND.setMode(S.landMode); $$('[data-act=landMode]').forEach(b => b.classList.toggle('on', b.dataset.v === S.landMode)); } else render(); },
+  landSet: (el) => { S.land.mode = el.dataset.v; S.land.pts = []; LAND?.setPreview([]); landHud(); },
+  landLevel: (el) => { S.land.level = el.dataset.v; landHud(); loadRegions(S.land.level); },
+  landKind: (el) => { S.land.kind = el.dataset.v; S.land.mode = 'gedung'; landHud(); },
+  roadKind: (el) => { S.land.road = el.dataset.v; landHud(); },
+  roadUndo: () => { S.land.pts.pop(); LAND?.setPreview(S.land.pts); landHud(); },
+  roadCancel: () => { S.land.pts = []; LAND?.setPreview([]); S.land.mode = 'jelajah'; landHud(); },
+  roadDone: (el) => act(el, 'road_place', { kind: S.land.road, points: S.land.pts, region: (() => { const f = S.land.pts[0]; return f ? regNames({ lat: f[0], lon: f[1] }) : {}; })() }, (r) => `${ROADK.find(x => x[0] === S.land.road)[2]} ${r.km} km dibangun (${usd(r.cost)})`, async () => { S.land.pts = []; LAND?.setPreview([]); await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }),
+  buildDel: (el) => modal({ title: 'Bongkar proyek?', icon: 'trash-2', body: '<p>Anda hanya mendapat 40% biaya kembali.</p>', actions: [{ label: 'Bongkar', cls: 'red', fn: () => act(null, 'build_remove', { id: +el.dataset.id }, (r) => `Dibongkar, kas kembali ${usd(r.refund)}`, async () => { await Promise.all([reloadBuilds(), loadMine(true)]); }) }, { label: 'Batal' }] }),
+  landMode: (el) => { S.landMode = el.dataset.v; if (LAND) { const m = $('#landMsg'); if (m) { m.style.display = ''; } LAND.setMode(S.landMode); setTimeout(() => { loadRegions(S.land.level); reloadBuilds(true); }, 600); $$('[data-act=landMode]').forEach(b => b.classList.toggle('on', b.dataset.v === S.landMode)); } else render(); },
   mapMode: (el) => { S.mapMode = el.dataset.v; destroyMap(); render(); },
   menu: () => $('#side').classList.toggle('open'),
   logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
@@ -220,6 +269,11 @@ const A = {
   support: (el) => act(el, 'petition_support', { id: +el.dataset.id }, 'Dukungan dicatat', async () => { await loadSel(true); render(); }),
   answerPet: (el) => modal({ title: 'Jawab petisi', icon: 'reply', body: '<div class="field"><label>Jawaban (maks 300 karakter)</label><textarea id="ansT" maxlength="300"></textarea></div>', actions: [{ label: 'Kirim jawaban', cls: 'pri', keep: true, fn: async (b) => { const r = await act(b, 'petition_answer', { id: +el.dataset.id, answer: val('ansT') }, 'Jawaban dikirim', async () => { closeModal(); await loadSel(true); render(); }); } }, { label: 'Batal' }] }),
   post: (el) => act(el, 'post_create', { country: S.sel, body: val('poBody'), type: S.me.president === S.sel ? 'pesan' : val('poType') }, 'Pesan dipublikasikan', async () => { S.dirty = false; await loadSel(true); render(); }),
+  socFilter: (el) => { S.filters.soc = el.dataset.v; render(); },
+  cmToggle: (el) => { S.openThreads = S.openThreads || new Set(); const id = +el.dataset.id; S.openThreads.has(id) ? S.openThreads.delete(id) : S.openThreads.add(id); S.dirty = false; render(); },
+  cmSend: (el) => { const id = +el.dataset.id, inp = $('#cmi_' + id); act(el, 'comment_create', { post_id: id, body: inp?.value || '' }, 'Komentar terkirim', async () => { S.dirty = false; await loadComments(); render(); }); },
+  cmDel: (el) => act(el, 'comment_delete', { id: +el.dataset.id }, 'Komentar dihapus', async () => { await loadComments(); render(); }),
+  cmHide: (el) => act(el, 'comment_hide', { id: +el.dataset.id, hidden: true }, 'Komentar disembunyikan', async () => { await loadComments(); render(); }),
   like: async (el) => { try { const r = await api('post_like', { id: +el.dataset.id }); el.classList.toggle('on', r.liked); el.innerHTML = `${ic('heart')} ${r.likes}`; refreshIcons(); } catch (e) {} },
   vote: (el) => act(el, 'vote', { country: S.sel, choice: el.dataset.v }, 'Suara Anda tercatat', async () => { await loadSel(true); render(); }),
   newsScope: (el) => { S.filters.newsScope = el.dataset.v; S.newsList = null; render(); loadNews(); },
@@ -278,6 +332,7 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#notifBox') && !e.target.closest('#bell')) $('#notifBox')?.classList.add('hidden');
   if (!e.target.closest('.search')) $('#sRes')?.classList.add('hidden');
 });
+document.addEventListener('keydown', (e) => { const t = e.target; if (e.key === 'Enter' && t.dataset?.cm) { e.preventDefault(); const b = $(`[data-act=cmSend][data-id="${t.dataset.cm}"]`); b?.click(); } });
 document.addEventListener('input', (e) => {
   const t = e.target, d = t.dataset || {}; if (!$('#pg')?.contains(t)) { if (t.id === 'gSearch') searchCountries(t.value); return; }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && t.id !== 'lbQ') S.dirty = true;
