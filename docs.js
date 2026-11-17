@@ -1,4 +1,5 @@
 // country.7mit — "Goggle Docs": editor dokumen kaya (rich text) untuk surat lamaran jabatan pemerintahan
+import { state as I18N } from './i18n.js';
 import { S, $, $$, esc, ic, modal, closeModal, refreshIcons, toast } from './core.js';
 
 const OK_TAGS = new Set(['p', 'br', 'b', 'i', 'u', 's', 'strong', 'em', 'strike', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'a', 'span', 'div', 'hr', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'sub', 'sup', 'font', 'code', 'pre']);
@@ -62,7 +63,7 @@ export function openDocs(o) {
   $('#gdTable').onmousedown = (e) => e.preventDefault(); $('#gdTable').onclick = () => { const r = +(prompt('Jumlah baris:', '3') || 0), c = +(prompt('Jumlah kolom:', '3') || 0); if (r < 1 || c < 1 || r > 12 || c > 8) return; const cell = (t) => `<${t} style="border:1px solid #888;padding:4px">&nbsp;</${t}>`; exec('insertHTML', `<table style="border-collapse:collapse;width:100%"><tbody>${Array.from({ length: r }, (_, i) => `<tr>${Array.from({ length: c }, () => cell(i ? 'td' : 'th')).join('')}</tr>`).join('')}</tbody></table><p></p>`); };
   $$('[data-tpl]', m).forEach(b => b.onclick = () => { if (doc.innerText.trim().length > 80 && !confirm('Ganti seluruh isi dokumen dengan templat ini?')) return; doc.innerHTML = TEMPLATES[b.dataset.tpl][1](o); stat(); });
   $$('[data-blk]', m).forEach(b => { b.onmousedown = (e) => e.preventDefault(); b.onclick = () => exec('formatBlock', b.dataset.blk.toUpperCase()); }); $$('[data-hl]', m).forEach(b => { b.onmousedown = (e) => e.preventDefault(); b.onclick = () => exec('hiliteColor', '#fff3a3'); });
-  const when = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+  const when = new Date().toLocaleDateString(I18N.loc, { day: 'numeric', month: 'long', year: 'numeric' });
   $$('[data-ins]', m).forEach(b => { b.onmousedown = (e) => e.preventDefault(); b.onclick = () => { const k = b.dataset.ins; exec('insertHTML', k === 'date' ? `<p>${esc(o.country)}, ${when} (tahun simulasi ${S.world?.year ?? ''})</p>` : k === 'sign' ? `<p>Hormat saya,<br><br><br><b>${esc(o.name)}</b><br><i>${esc(o.office)}</i></p>` : k === 'list' ? '<ol><li>[Program 1]</li><li>[Program 2]</li><li>[Program 3]</li></ol>' : `<p><b>Nama:</b> ${esc(o.name)}<br><b>Kewarganegaraan:</b> ${esc(o.country)}<br><b>Jabatan dilamar:</b> ${esc(o.office)}<br><b>Tahun simulasi:</b> ${S.world?.year ?? ''}</p>`); }; });
   doc.addEventListener('input', stat); doc.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); toast('Dokumen tersimpan otomatis di jendela ini', 'ok'); } }); stat(); refreshIcons();
   const cleanup = () => document.removeEventListener('selectionchange', save);

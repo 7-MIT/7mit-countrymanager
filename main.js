@@ -7,9 +7,12 @@ import { Country3D, loadOutline } from './country3d.js';
 import { AREAS } from './areas.js';
 import { Region3D } from './region3d.js';
 import { openDocs, renderDoc } from './docs.js';
+import { initI18n, setLang, syncLangFromAccount, LANGS, state as I18N } from './i18n.js';
 import { showStart, stopStart, accountModal } from './start.js';
 
 const app = $('#app');
+initI18n((a, b) => api(a, b, { quiet: true }));
+function openLang() { const cur = I18N.lang; modal({ title: 'Bahasa / Language', icon: 'languages', body: `<p class="sub" style="margin-bottom:10px">Pilihan bahasa berlaku untuk seluruh game dan disimpan di akun Anda.</p><div class="stack">${LANGS.map(([v, n, code, f]) => `<button class="btn ${v === cur ? 'pri' : ''}" data-act="langSet" data-v="${v}" style="justify-content:flex-start;gap:10px"><span style="font-size:20px">${f}</span><b>${esc(code)}</b> <span>${esc(n)}</span>${v === cur ? ic('check') : ''}</button>`).join('')}</div><p class="sub" style="margin-top:10px" data-notr>ENG · JVA (Jawa) · SDN (Sunda) diterjemahkan otomatis oleh Gemini dan disimpan agar cepat.</p>`, actions: [{ label: 'Tutup' }] }); }
 const st = document.createElement('style'); st.textContent = '.osm-dark .leaflet-tile-pane{filter:invert(1) hue-rotate(185deg) brightness(.82) contrast(.92) saturate(.6)}'; document.head.appendChild(st);
 
 // ================= LOGIN =================
@@ -19,7 +22,7 @@ function showGate(msg) {
   <p>Dunia bersama untuk semua pemain: jadi presiden atau warga, kelola ekonomi, dagang, politik, dan diplomasi. Anda harus masuk lebih dulu untuk bermain.</p>
   <button class="btn pri big" id="gLogin">${ic('log-in')} Masuk dengan Google</button>
   ${msg ? `<div class="banner" style="margin-top:16px">${ic('triangle-alert')}<div>${esc(msg)}</div></div>` : ''}
-  <div style="margin-top:14px"><a class="sub" href="classic/">Mode klasik: game 3D satu pemain</a></div>
+  <div style="margin-top:14px"><a class="sub" href="classic/">Mode klasik: game 3D satu pemain</a> · <a class="sub" href="#" data-act="lang">Bahasa / Language</a></div>
   <div class="sub" style="margin-top:12px">Login dikelola oleh server.7mit (Supabase Auth). Seluruh angka dan peristiwa adalah data permainan.</div></div></div>`;
   refreshIcons();
   $('#gLogin').onclick = async (e) => { const b = e.currentTarget; b.disabled = true; b.innerHTML = `${ic('loader-circle', 'spin')} Mengalihkan ke Google…`; refreshIcons();
@@ -40,7 +43,7 @@ function shell() {
     <button class="btn pri" id="advBtn" data-act="advanceAsk">${ic('fast-forward')} Majukan 1 tahun</button>
     <span class="chip" id="visChip" title="Pengunjung aktif">${ic('users-round')} <b id="vis">0</b></span>
     <span class="chip" id="connChip">${ic('wifi')} <span>…</span></span>
-    <div style="position:relative"><button class="iconbtn" id="bell" data-act="bell" aria-label="Notifikasi">${ic('bell')}<span class="badge hidden" id="bellN">0</span></button><div class="notif hidden" id="notifBox"></div></div>
+    <button class="iconbtn" data-act="lang" aria-label="Bahasa" title="Bahasa / Language">${ic('languages')}</button><div style="position:relative"><button class="iconbtn" id="bell" data-act="bell" aria-label="Notifikasi">${ic('bell')}<span class="badge hidden" id="bellN">0</span></button><div class="notif hidden" id="notifBox"></div></div>
     <button class="iconbtn" data-act="help" aria-label="Bantuan">${ic('circle-help')}</button></div>
    <div id="pg"></div></div></div>`;
   refreshIcons();
@@ -281,6 +284,8 @@ const A = {
   cityRoadUndo: () => { CITYCTX.pts.pop(); CITY.setPreview(CITYCTX.pts, S.land.road); cityHud(); },
   cityRoadDone: (el) => { const pts = CITYCTX.pts.map(([x, z]) => CITY.toLL(x, z)); act(el, 'road_place', { kind: S.land.road, points: pts, region: cityRegion() }, (r) => `Jalur ${r.km} km dibangun (${usd(r.cost)})`, async () => { CITYCTX.pts = []; CITY.setPreview([], S.land.road); await Promise.all([reloadBuilds(), loadMine(true), sync(true)]); }); },
   account: () => accountModal(startHooks),
+  lang: () => openLang(),
+  langSet: (el) => { setLang(el.dataset.v); closeModal(); toast(({ id: 'Bahasa: Indonesia', en: 'Language: English', jv: 'Basa: Jawa', su: 'Basa: Sunda' })[el.dataset.v], 'ok'); },
   toStart: () => startHooks.start(),
   logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
   help: () => tutorial(0),
@@ -460,7 +465,7 @@ Object.assign(A, {
 let booted = false, running = false;
 const startHooks = {
   refresh: async () => { await sync(true); await Promise.all([loadMine(true), loadSel(true)]); },
-  start: () => { destroyMap(); destroyLand(); S.inStart = true; showStart(app, startHooks); },
+  start: () => { destroyMap(); destroyLand(); S.inStart = true; showStart(app, { ...startHooks, lang: openLang }); },
   enter: () => { stopStart(); S.inStart = false; S.page = S.page === 'land' ? 'land' : (S.me?.president ? 'dash' : S.page || 'dash'); shell(); render(); loadSel(true); loadMine(true); loadGov(true); let seen = false; try { seen = !!localStorage.getItem('cm_tut'); } catch (e) {} if (!seen) setTimeout(() => tutorial(0), 600); else if (S.me?.president || S.me?.citizenship) { S.sel = S.me.president || S.me.citizenship; setTimeout(() => A.openCapital(), 300); } },
   logout: async () => { releaseBeacon(); await sb.auth.signOut(); location.reload(); },
 };
@@ -470,7 +475,7 @@ async function boot(session) {
   try { await sync(true); } catch (e) {}
   if (!S.me) { booted = false; showGate('Tidak dapat memuat dunia. Pastikan koneksi dan coba lagi.'); return; }
   if (!running) { running = true; subscribeRealtime(); setInterval(() => sync(), 5000); setInterval(() => { updateAdv(); updateConn(); tickTop(); tickClock(); }, 1000); setInterval(() => { loadSel(); loadMine(); }, 10000); }
-  startHooks.start();
+  syncLangFromAccount(); startHooks.start();
 }
 sb.auth.onAuthStateChange((ev, session) => { if (session) S.token = session.access_token; if (ev === 'SIGNED_OUT') { booted = false; showGate(); } if ((ev === 'SIGNED_IN' || ev === 'INITIAL_SESSION') && session && !booted) boot(session); });
 (async () => { const { data } = await sb.auth.getSession(); if (!data.session) showGate(); else boot(data.session); })();
