@@ -250,3 +250,10 @@ tr.click:hover{background:rgba(255,255,255,.06)}
 .ung-bubble{position:absolute;left:0;top:0;z-index:2;max-width:240px;background:#fff;color:#14202e;border-radius:10px;padding:6px 9px;font-size:12px;pointer-events:none;box-shadow:0 2px 8px #0008}.ung-bubble.speech{background:#fff7dd;max-width:320px}.ung-bubble.chair{background:#d7e8ff}
 .ung-talk{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);width:min(520px,94vw);background:#0a1626f2;border:1px solid #ffffff33;border-radius:12px;padding:12px;z-index:4;display:grid;gap:8px}.ung-talk textarea,.ung-talk input{width:100%}.ung-chat{max-height:150px;overflow:auto;font-size:13px;display:grid;gap:4px}
 @media(max-width:700px){.ung-log{top:auto;bottom:140px;right:6px;width:58vw;max-height:26vh}.ung-top{flex-wrap:wrap}}
+
+/* media sosial hidup */
+.av.npcav{color:#fff;cursor:pointer}.plink{cursor:pointer;font-weight:700;color:inherit}.plink:hover{text-decoration:underline}
+.mention{color:#ff8a8a;font-weight:600}
+.cmt.reply{margin-left:14px;padding-left:10px;border-left:2px solid rgba(255,255,255,.12)}
+.replychip{display:flex;align-items:center;gap:6px;margin-top:8px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.07);font-size:12px;width:max-content;max-width:100%}
+.cmt .like{font-size:12px}
