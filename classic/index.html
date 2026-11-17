@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>country.7mit — Country Manager 3D</title>
+<meta name="description" content="Jadilah Presiden! Bangun, kembangkan, dan pimpin negaramu di dunia 3D yang interaktif dan realistis.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>">
+<style>
+:root{
+  --bg:#050a16; --glass:rgba(10,18,38,.72); --glass2:rgba(18,30,60,.82); --line:rgba(255,255,255,.12);
+  --ink:#e8eefc; --dim:#93a4c8; --accent:#5eead4; --gold:#ffd166; --red:#ff6b7a; --green:#6ee7a0; --blue:#7dd3fc;
+  --r:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Inter,system-ui,-apple-system,Roboto,sans-serif;-webkit-font-smoothing:antialiased;user-select:none}
+canvas#c{position:fixed;inset:0;width:100%;height:100%;display:block;outline:none;touch-action:none}
+#labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.wlabel{position:absolute;left:0;top:0;font-size:11px;font-weight:600;white-space:nowrap;padding:2px 7px;border-radius:99px;background:rgba(5,10,22,.62);border:1px solid var(--line);color:#cfe3ff;display:none;backdrop-filter:blur(4px);text-shadow:0 1px 2px #000}
+.wlabel.me{background:linear-gradient(90deg,#b9860f,#ffd166);color:#1b1300;border-color:#ffe5a1;font-size:12px}
+.wlabel.sel{border-color:var(--accent);color:#fff;background:rgba(20,70,80,.8)}
+.hidden{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+.glass{background:var(--glass);border:1px solid var(--line);border-radius:var(--r);backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);box-shadow:0 10px 40px rgba(0,0,0,.45)}
+.btn{padding:9px 16px;border-radius:10px;background:rgba(255,255,255,.08);border:1px solid var(--line);font-weight:600;transition:.15s}
+.btn:hover:not(:disabled){background:rgba(255,255,255,.16);transform:translateY(-1px)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.pri{background:linear-gradient(135deg,#14b8a6,#3b82f6);border-color:transparent;color:#fff;box-shadow:0 6px 24px rgba(20,184,166,.35)}
+.btn.gold{background:linear-gradient(135deg,#f59e0b,#ffd166);color:#2a1b00;border-color:transparent}
+.btn.red{background:rgba(255,80,100,.18);border-color:rgba(255,107,122,.5)}
+.btn.sm{padding:5px 10px;font-size:12px;border-radius:8px}
+
+/* ---------- Intro ---------- */
+#intro{position:fixed;inset:0;display:flex;pointer-events:none;z-index:20}
+#intro .card{pointer-events:auto;margin:20px;width:min(470px,calc(100vw - 40px));max-height:calc(100vh - 40px);display:flex;flex-direction:column;padding:22px}
+#logo{font-size:34px;font-weight:900;letter-spacing:-1px;line-height:1;background:linear-gradient(90deg,#ffd166,#5eead4 55%,#7dd3fc);-webkit-background-clip:text;background-clip:text;color:transparent}
+#logo small{font-size:15px;font-weight:700;letter-spacing:3px;display:block;color:var(--dim);-webkit-text-fill-color:var(--dim);margin-top:4px}
+.tag{color:var(--dim);margin:10px 0 14px}
+label.f{display:block;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin:6px 0 4px}
+input[type=text]{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink);font:inherit;outline:none;user-select:text}
+input[type=text]:focus{border-color:var(--accent)}
+#clist{overflow:auto;margin:6px -6px 12px 0;padding-right:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:120px}
+.cc{padding:9px 10px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line);text-align:left;transition:.15s;display:block;width:100%}
+.cc:hover{background:rgba(255,255,255,.12)}
+.cc.sel{border-color:var(--gold);background:rgba(255,209,102,.14);box-shadow:0 0 0 1px var(--gold) inset}
+.cc b{display:block;font-size:13px}.cc span{font-size:11px;color:var(--dim)}
+.cc .fl{font-size:22px;float:right;margin-left:4px}
+.diff{letter-spacing:1px;color:var(--gold);font-size:11px}
+#cinfo{font-size:12.5px;color:var(--dim);min-height:50px;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.25);margin-bottom:12px}
+#cinfo b{color:var(--ink)}
+.row{display:flex;gap:10px;align-items:center}
+.grow{flex:1}
+
+/* ---------- HUD ---------- */
+#hud{position:fixed;inset:0;pointer-events:none;z-index:10}
+#hud > *{pointer-events:auto}
+#top{position:absolute;left:12px;right:12px;top:10px;display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;pointer-events:none}
+#top > *{pointer-events:auto}
+.box{padding:8px 12px;display:flex;align-items:center;gap:10px}
+#who{font-weight:700}#who small{display:block;font-weight:500;color:var(--dim);font-size:11px}
+#who .fl{font-size:30px;line-height:1}
+#datebox{flex-direction:column;align-items:stretch;gap:5px;min-width:210px}
+#datebox .d{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:700}
+#mbar{height:4px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden}#mbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--blue))}
+.spd{display:flex;gap:4px}
+.spd button{width:30px;height:26px;border-radius:7px;background:rgba(255,255,255,.08);border:1px solid var(--line);font-size:12px}
+.spd button.on{background:var(--accent);color:#012;border-color:transparent}
+#stats{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:300px}
+.chip{padding:6px 11px;min-width:104px;flex:1 1 104px;max-width:178px}
+.chip small{display:block;font-size:10px;letter-spacing:.7px;text-transform:uppercase;color:var(--dim)}
+.chip b{font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip em{font-style:normal;font-size:11px;margin-left:4px}
+.up{color:var(--green)}.down{color:var(--red)}.warn{color:var(--gold)}
+#views{display:flex;gap:6px}
+#views button{padding:8px 12px}
+#views button.on{background:var(--accent);color:#012;border-color:transparent}
+#panel{position:absolute;right:12px;top:126px;bottom:56px;width:372px;display:flex;flex-direction:column;overflow:hidden}
+#tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+#tabs button{flex:1;padding:10px 0;font-size:17px;border-bottom:2px solid transparent;opacity:.6;transition:.15s}
+#tabs button:hover{opacity:1}
+#tabs button.on{opacity:1;border-bottom-color:var(--accent);background:rgba(94,234,212,.08)}
+#tabbody{overflow:auto;padding:14px;flex:1}
+#tabbody h3{font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin:14px 0 8px}
+#tabbody h3:first-child{margin-top:0}
+.bar{height:8px;border-radius:5px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:3px}
+.bar i{display:block;height:100%;border-radius:5px;transition:width .5s}
+.ind{margin-bottom:9px;font-size:13px}.ind .l{display:flex;justify-content:space-between}
+.ind .l span:last-child{font-variant-numeric:tabular-nums;color:var(--dim)}
+.sl{margin-bottom:10px;font-size:13px}.sl .l{display:flex;justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--accent);height:20px}
+.kv{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed rgba(255,255,255,.08);font-size:13px}.kv span:first-child{color:var(--dim)}
+.item{padding:10px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line);margin-bottom:8px;display:flex;gap:10px;align-items:center;width:100%;text-align:left}
+.item:hover:not(.static){background:rgba(255,255,255,.1)}
+.item.on{border-color:var(--accent);background:rgba(94,234,212,.12)}
+.item .ic{font-size:26px;flex:none;width:34px;text-align:center}
+.item .tx{flex:1;min-width:0}.item .tx b{display:block;font-size:13px}.item .tx span{font-size:11.5px;color:var(--dim);display:block}
+.item .pr{font-size:12px;font-weight:700;color:var(--gold);white-space:nowrap}
+.pill{display:inline-block;padding:1px 7px;border-radius:99px;font-size:10.5px;font-weight:700;background:rgba(255,255,255,.12);margin-right:3px}
+.pill.g{background:rgba(110,231,160,.2);color:var(--green)}.pill.y{background:rgba(255,209,102,.2);color:var(--gold)}.pill.r{background:rgba(255,107,122,.2);color:var(--red)}
+.tog{width:44px;height:24px;border-radius:99px;background:rgba(255,255,255,.15);position:relative;flex:none;transition:.2s}
+.tog::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
+.tog.on{background:var(--accent)}.tog.on::after{left:23px}
+.log{font-size:12.5px;padding:7px 9px;border-left:3px solid var(--blue);background:rgba(255,255,255,.04);border-radius:0 8px 8px 0;margin-bottom:6px}
+.log small{color:var(--dim);display:block;font-size:10.5px}
+.log.good{border-color:var(--green)}.log.bad{border-color:var(--red)}.log.warn{border-color:var(--gold)}
+canvas.spark{width:100%;height:54px;display:block;background:rgba(0,0,0,.2);border-radius:8px}
+#ticker{position:absolute;left:12px;right:396px;bottom:12px;height:34px;padding:0 14px;display:flex;align-items:center;gap:10px;overflow:hidden;font-size:13px}
+#ticker b{color:var(--gold);flex:none;letter-spacing:1px;font-size:11px}
+#tick{white-space:nowrap;transition:opacity .4s}
+#plotcard{position:absolute;left:12px;bottom:58px;width:min(430px,calc(100vw - 440px));padding:14px;max-height:50vh;overflow:auto}
+#plotcard h4{font-size:15px;margin-bottom:2px}
+#plotcard .sub{color:var(--dim);font-size:12px;margin-bottom:10px}
+.bgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.bgrid button{padding:7px 3px;border-radius:10px;background:rgba(255,255,255,.07);border:1px solid var(--line);font-size:11px;line-height:1.2;text-align:center;transition:.12s}
+.bgrid button:hover:not(:disabled){background:rgba(94,234,212,.2);border-color:var(--accent);transform:translateY(-1px)}
+.bgrid button:disabled{opacity:.35;cursor:not-allowed}
+.bgrid button i{display:block;font-style:normal;font-size:22px}.bgrid button small{color:var(--gold);font-size:10.5px}
+#hint{position:absolute;left:50%;top:128px;transform:translateX(-50%);padding:7px 16px;font-size:13px;border-radius:99px;pointer-events:none}
+#fade{position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;transition:opacity .35s;z-index:50}
+#vig{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,10,.5));z-index:5}
+
+/* modal */
+#modal{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(2,5,14,.55);backdrop-filter:blur(3px);padding:16px}
+#modal .m{width:min(560px,100%);max-height:90vh;overflow:auto;padding:24px;background:var(--glass2);animation:pop .3s cubic-bezier(.2,1.4,.4,1)}
+@keyframes pop{from{transform:scale(.88);opacity:0}to{transform:scale(1);opacity:1}}
+#modal h2{font-size:22px;margin-bottom:8px}#modal .big{font-size:54px;line-height:1;margin-bottom:6px}
+#modal p{color:#c7d4f0;margin-bottom:14px;user-select:text}
+.ch{display:block;width:100%;text-align:left;padding:11px 14px;margin-bottom:8px;border-radius:12px;background:rgba(255,255,255,.07);border:1px solid var(--line);transition:.15s}
+.ch:hover:not(:disabled){background:rgba(94,234,212,.15);border-color:var(--accent);transform:translateX(3px)}
+.ch b{display:block}.ch span{font-size:12px;color:var(--dim)}.ch:disabled{opacity:.45}
+.grade{font-size:90px;font-weight:900;line-height:1;background:linear-gradient(135deg,#ffd166,#f97316);-webkit-background-clip:text;background-clip:text;color:transparent}
+#toasts{position:fixed;top:78px;left:50%;transform:translateX(-50%);z-index:30;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
+.toast{padding:8px 16px;border-radius:99px;background:rgba(10,20,40,.9);border:1px solid var(--line);font-size:13px;animation:toast 3.6s forwards;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+.toast.good{border-color:var(--green)}.toast.bad{border-color:var(--red)}.toast.warn{border-color:var(--gold)}
+@keyframes toast{0%{opacity:0;transform:translateY(-10px)}8%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}
+#loading{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#050a16;transition:opacity .8s}
+#loading .sp{width:54px;height:54px;border-radius:50%;border:4px solid rgba(255,255,255,.15);border-top-color:var(--accent);animation:spin 1s linear infinite;margin-bottom:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+::-webkit-scrollbar{width:7px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:4px}
+.kbd{font:11px monospace;padding:1px 6px;border-radius:5px;background:rgba(255,255,255,.14)}
+@media (max-width:900px){
+  #panel{top:auto;left:8px;right:8px;width:auto;bottom:50px;height:38vh}
+  #ticker{right:8px;left:8px;bottom:8px}
+  #plotcard{left:8px;right:8px;width:auto;bottom:calc(38vh + 54px);max-height:34vh}
+  #top{left:8px;right:8px;top:6px;gap:6px}#stats{min-width:0}.chip{min-width:78px;padding:4px 8px}.chip b{font-size:13px}
+  #intro .card{margin:8px;width:calc(100vw - 16px);max-height:62vh;align-self:flex-end}
+  #logo{font-size:26px}#hint{top:auto;bottom:calc(38vh + 60px)}
+  #datebox{min-width:150px}
+}
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0"></canvas>
+<div id="labels"></div>
+<div id="vig"></div>
+
+<div id="loading"><div class="sp"></div><div id="logo2" style="font-weight:800;letter-spacing:2px">COUNTRY.7MIT</div><div style="color:var(--dim);margin-top:6px">Memuat dunia…</div></div>
+
+<div id="intro" class="hidden">
+  <div class="card glass">
+    <div id="logo">COUNTRY.7MIT<small>COUNTRY MANAGER 3D</small></div>
+    <p class="tag">Jadilah <b>Presiden</b>. Pimpin, bangun & kembangkan negaramu di tengah dunia nyata — ekonomi, rakyat, diplomasi, hingga pemilu.</p>
+    <label class="f">Nama Presiden</label>
+    <input type="text" id="pname" maxlength="24" placeholder="Nama Anda" value="">
+    <label class="f">Pilih Negara <span style="text-transform:none;letter-spacing:0">(klik kartu / titik di globe)</span></label>
+    <div id="clist"></div>
+    <div id="cinfo">Pilih negara untuk melihat detailnya.</div>
+    <div class="row">
+      <button class="btn pri grow" id="startBtn" disabled>🏛️ Mulai Memimpin</button>
+      <button class="btn" id="contBtn" title="Lanjutkan permainan tersimpan">💾 Lanjutkan</button>
+    </div>
+    <div id="best" style="font-size:11.5px;color:var(--dim);margin-top:10px"></div>
+  </div>
+</div>
+
+<div id="hud" class="hidden">
+  <div id="top">
+    <div class="glass box" id="who"><span class="fl" id="wflag"></span><div><span id="wname"></span><small id="wpres"></small></div></div>
+    <div class="glass box" id="datebox">
+      <div class="d"><span id="date">Jan 2026</span><div class="spd" id="spd"><button data-s="0" title="Jeda (Spasi)">⏸</button><button data-s="1" title="Normal (1)">▶</button><button data-s="2" title="Cepat (2)">⏩</button><button data-s="4" title="Super cepat (3)">⏭</button></div></div>
+      <div id="mbar"><i></i></div>
+    </div>
+    <div id="stats"></div>
+    <div class="glass box" id="views"><button class="btn on" data-v="nation">🏙️ Negara</button><button class="btn" data-v="world">🌍 Dunia</button><button class="btn" id="menuBtn" title="Menu">⚙️</button></div>
+  </div>
+  <div id="hint" class="glass hidden"></div>
+  <div id="plotcard" class="glass hidden"></div>
+  <aside id="panel" class="glass">
+    <div id="tabs"></div>
+    <div id="tabbody"></div>
+  </aside>
+  <div id="ticker" class="glass"><b>BERITA</b><span id="tick"></span></div>
+</div>
+<div id="toasts"></div>
+<div id="fade"></div>
+<div id="modal" class="hidden"></div>
+
+<script type="importmap">{"imports":{"three":"./lib/three.module.js"}}</script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
