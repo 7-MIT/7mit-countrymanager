@@ -7,6 +7,7 @@ import { Country3D, loadOutline } from './country3d.js';
 import { AREAS } from './areas.js';
 import { Region3D } from './region3d.js';
 import { openDocs, renderDoc } from './docs.js';
+import { openUNGA, closeUNGA } from './unga.js';
 import { initI18n, setLang, syncLangFromAccount, LANGS, state as I18N } from './i18n.js';
 import { showStart, stopStart, accountModal } from './start.js';
 
@@ -34,7 +35,7 @@ function showGate(msg) {
 const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'struktur', 'jabatan', 'uu', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
 function shell() {
   app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : k === 'inbox' ? `<span class="dot hidden" data-rep></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
-   <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="openCapital">${ic('building-2')} <span>Kota 3D</span></button><button class="nav" data-act="account">${ic('circle-user-round')} <span>Akun</span></button><button class="nav" data-act="toStart">${ic('house')} <span>Menu awal</span></button><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
+   <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="openUN">${ic('globe')} <span>Sidang PBB</span></button><button class="nav" data-act="openCapital">${ic('building-2')} <span>Kota 3D</span></button><button class="nav" data-act="account">${ic('circle-user-round')} <span>Akun</span></button><button class="nav" data-act="toStart">${ic('house')} <span>Menu awal</span></button><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
    <div class="main"><div class="top"><button class="iconbtn menuBtn" data-act="menu" aria-label="Menu">${ic('menu')}</button>
     <div class="search">${ic('search')}<input id="gSearch" type="search" placeholder="Cari negara atau teritori…" autocomplete="off"><div class="sres hidden" id="sRes"></div></div>
     <span class="chip" id="roleChip"></span><div class="grow"></div>
@@ -100,7 +101,7 @@ export async function sync(force) {
     const firstTime = !S.since;
     if (d.full) S.countries.clear(); d.countries.forEach(c => S.countries.set(c.code, c)); if (d.since) S.since = d.since;
     const prevPres = S.me?.president, prevAnn = S.world.announcement;
-    S.me = d.me; S.world = d.world; S.visitors = d.visitors; handleAdv(d.adv); if (S.npcYear !== d.world.year && !d.world.advancing) { S.npcYear = d.world.year; npcThink(); }
+    const prevYear = S.world?.year; S.me = d.me; S.world = d.world; S.visitors = d.visitors; handleAdv(d.adv); if (prevYear && d.world.year !== prevYear) pushNotif({ id: 'unga' + d.world.year, icon: 'globe', title: `Sidang Majelis Umum PBB ${d.world.year} dibuka`, body: 'Pemimpin negara dan menteri luar negeri diundang berpidato di markas PBB (menu Sidang PBB).' }); if (S.npcYear !== d.world.year && !d.world.advancing) { S.npcYear = d.world.year; npcThink(); }
     if (d.pending > S.pending && !firstTime) pushNotif({ id: 'pend' + Date.now(), icon: 'inbox', title: 'Penawaran masuk', body: `${d.pending} penawaran menunggu jawaban Anda` });
     S.pending = d.pending;
     if (d.world.announcement && d.world.announcement !== S.lastAnn) { if (S.lastAnn !== '' || !firstTime) pushNotif({ id: 'ann' + d.world.announcement, icon: 'megaphone', title: 'Pengumuman UN', body: d.world.announcement }); S.lastAnn = d.world.announcement; }
@@ -439,7 +440,7 @@ Object.assign(A, {
   gvApply: (el) => { const o = el.dataset.o, M = S.G.offices[o], c = cty(S.G.country); openDocs({ title: `Surat Lamaran — ${M.name}`, office: M.name, country: c?.name || S.G.country, name: S.me?.name || 'Pelamar', submitLabel: 'Kirim Lamaran',
       info: `<b>${esc(M.name)}</b><br>Diputuskan oleh: ${S.G.presidentLive ? 'presiden pemain' : 'presiden NPC (Gemini, menilai rekam jejak Anda)'}.${M.dom?.length ? `<br>Wewenang usulan kebijakan: ${esc(M.dom.join(', '))}.` : ''}<br>Masa jabatan: ${M.term} tahun simulasi.<br>Tip: surat yang jelas, terukur, dan menyebut program kerja lebih meyakinkan.`,
       onSubmit: async (html, title) => { const r = await act(null, 'office_apply', { country: S.G.country, office: o, pitch: html }, (r) => r.note || 'Lamaran terkirim'); if (!r) return false; await afterGov(); return true; } }); },
-  openUN: () => toast('Ruang sidang Majelis Umum PBB segera dibuka', 'info'),
+  openUN: () => { $('#side')?.classList.remove('open'); openUNGA(); },
   gvViewApp: (el) => { const a = (S.G.apps || []).find(x => x.id === +el.dataset.id); if (a) openDocs({ readOnly: true, title: `Lamaran ${a.name} — ${S.G.offices[a.office]?.name || a.office}`, html: a.pitch }); },
   gvCoal: (el) => act(el, 'coalition_set', { party: el.dataset.p, join: el.dataset.j === '1' }, (r) => r.accepted === false ? r.note : (r.note || 'Koalisi diperbarui'), afterGov),
   gvDissolve: () => modal({ title: 'Bubarkan parlemen?', icon: 'flame', body: `<p>Pemilu dini digelar seketika: kursi partai bergeser mengikuti kepuasan rakyat, dan pemilu legislatif pemain dibuka. Bila koalisi Anda berkuasa, kepuasan −2 dan stabilitas −2. Hanya sekali per 4 tahun simulasi.</p><textarea id="gvDis" rows="3" maxlength="300" style="width:100%" placeholder="Alasan pembubaran (min 10 karakter)"></textarea>`, actions: [{ label: 'Bubarkan', cls: 'red', keep: true, fn: (b) => act(b, 'parliament_dissolve', { reason: gvVal('gvDis') }, (r) => r.note, async () => { closeModal(); await afterGov(); }) }, { label: 'Batal' }] }),

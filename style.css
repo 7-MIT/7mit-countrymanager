@@ -237,3 +237,16 @@ tr.click:hover{background:rgba(255,255,255,.06)}
 #modal .gd-paper .gd-doc-body,#modal .gd-paper .gd-doc-body p,#modal .gd-paper .gd-doc-body li,#modal .gd-paper .gd-doc-body td,#modal .gd-paper .gd-doc-body th,#modal .gd-paper .gd-doc-body div,#modal .gd-paper .gd-doc-body h1,#modal .gd-paper .gd-doc-body h2,#modal .gd-paper .gd-doc-body h3,#modal .gd-paper .gd-doc-body blockquote,#modal .gd-paper .gd-doc-body span{color:#202124}
 .gd{height:min(88vh,820px)}.gd-title{flex:1;min-width:200px;width:min(420px,40vw)}.gd-top{flex-wrap:nowrap}
 #modal.gdm .gd *{font-family:inherit}#modal.gdm .gd-doc-body{font-family:Inter,system-ui,sans-serif}
+
+/* Sidang Majelis Umum PBB */
+.ungaov{position:fixed;inset:0;z-index:75;background:#050a14;color:#e8f1ff;overflow:hidden}.ung-gl,.ung-gl canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.ung-msg{position:absolute;inset:0;display:grid;place-items:center;font-size:18px}
+.ung-top{position:absolute;left:0;right:0;top:0;display:flex;gap:10px;align-items:center;padding:10px 14px;background:linear-gradient(#050a14e6,#050a1400);z-index:3}
+.ung-log{position:absolute;right:10px;top:70px;width:min(340px,42vw);max-height:46vh;overflow:auto;background:#050a14cc;border:1px solid #ffffff22;border-radius:10px;padding:8px;z-index:3;font-size:13px}.ung-l{padding:4px 2px;border-bottom:1px solid #ffffff10}.ung-l.speech{background:#1d5fa822;border-radius:6px;padding:6px}.ung-l.npc{color:#cfe6ff;font-style:italic}.ung-l.chair{color:#ffd98a}.ung-l.talk{opacity:.6}
+.ung-hint{position:absolute;left:0;right:0;bottom:70px;text-align:center;font-size:13px;opacity:.85;pointer-events:none;z-index:3;text-shadow:0 1px 3px #000}
+.ung-bar{position:absolute;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;background:linear-gradient(#050a1400,#050a14f0);z-index:3;align-items:center}.ung-bar input{flex:1;min-width:140px}
+.ung-joy{position:absolute;left:18px;bottom:96px;width:110px;height:110px;border-radius:50%;background:#ffffff14;border:1px solid #ffffff33;z-index:3;touch-action:none;display:grid;place-items:center}.ung-joy i{width:46px;height:46px;border-radius:50%;background:#ffffff40;display:block}
+.ung-tag{position:absolute;left:0;top:0;z-index:2;font-size:12px;background:#050a14b0;border-radius:4px;padding:1px 6px;white-space:nowrap;pointer-events:none}.ung-tag.me{background:#2f7bc4}.ung-tag.pres{background:#8a1c2c;color:#ffe7a6}.ung-tag.chair{background:#16406e}.ung-tag.npc{background:#0b1f33cc;color:#cfe6ff}
+.ung-bubble{position:absolute;left:0;top:0;z-index:2;max-width:240px;background:#fff;color:#14202e;border-radius:10px;padding:6px 9px;font-size:12px;pointer-events:none;box-shadow:0 2px 8px #0008}.ung-bubble.speech{background:#fff7dd;max-width:320px}.ung-bubble.chair{background:#d7e8ff}
+.ung-talk{position:absolute;left:50%;bottom:84px;transform:translateX(-50%);width:min(520px,94vw);background:#0a1626f2;border:1px solid #ffffff33;border-radius:12px;padding:12px;z-index:4;display:grid;gap:8px}.ung-talk textarea,.ung-talk input{width:100%}.ung-chat{max-height:150px;overflow:auto;font-size:13px;display:grid;gap:4px}
+@media(max-width:700px){.ung-log{top:auto;bottom:140px;right:6px;width:58vw;max-height:26vh}.ung-top{flex-wrap:wrap}}
