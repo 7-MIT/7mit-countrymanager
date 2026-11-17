@@ -6,6 +6,7 @@ import { Globe } from './globe.js';
 import { Country3D, loadOutline } from './country3d.js';
 import { AREAS } from './areas.js';
 import { Region3D } from './region3d.js';
+import { openDocs, renderDoc } from './docs.js';
 import { showStart, stopStart, accountModal } from './start.js';
 
 const app = $('#app');
@@ -27,7 +28,7 @@ function showGate(msg) {
 }
 
 // ================= SHELL =================
-const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'jabatan', 'uu', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
+const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'struktur', 'jabatan', 'uu', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
 function shell() {
   app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : k === 'inbox' ? `<span class="dot hidden" data-rep></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
    <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="openCapital">${ic('building-2')} <span>Kota 3D</span></button><button class="nav" data-act="account">${ic('circle-user-round')} <span>Akun</span></button><button class="nav" data-act="toStart">${ic('house')} <span>Menu awal</span></button><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
@@ -69,7 +70,7 @@ export function render() {
   refreshIcons(); animateNumbers($('#pg')); try { Pg.after?.(); } catch (e) { console.error(e); } tickClock(); window.scrollTo(0, y); document.title = `${Pg.t} — country.7mit`; updateChrome();
 }
 hooks.render = render;
-export function go(p) { if (S.page === 'map' && p !== 'map') destroyMap(); if (S.page === 'land' && p !== 'land') destroyLand(); S.page = p; S.dirty = false; $('#side')?.classList.remove('open'); if (p === 'news') loadNews(); if (p === 'jabatan' || p === 'uu') loadGov(true); if (p === 'map') loadElections(); render(); window.scrollTo(0, 0); }
+export function go(p) { if (S.page === 'map' && p !== 'map') destroyMap(); if (S.page === 'land' && p !== 'land') destroyLand(); S.page = p; S.dirty = false; $('#side')?.classList.remove('open'); if (p === 'news') loadNews(); if (p === 'jabatan' || p === 'uu' || p === 'struktur') loadGov(true); if (p === 'map') loadElections(); render(); window.scrollTo(0, 0); }
 hooks.go = go;
 function softRender() { if (S.dirty || !$('#pg')) return; const a = document.activeElement; if (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName) && $('#pg').contains(a)) return; if (S.page === 'map') { updateMapStyle(); return; } if (S.page === 'land') return; render(); }
 
@@ -112,7 +113,7 @@ export async function sync(force) {
 // otak NPC adaptif: dipicu sekali per tahun simulasi (server menjamin hanya satu yang jalan)
 async function npcThink() { const hdr = { 'Content-Type': 'application/json', Authorization: `Bearer ${S.token}`, apikey: SB_KEY }; try { const r = await (await fetch(`${SB_URL}/functions/v1/cm-npc`, { method: 'POST', headers: hdr, body: '{}' })).json(); if (r?.data?.ok) queueSync(); } catch (e) {} try { const r = await (await fetch(`${SB_URL}/functions/v1/cm-gov`, { method: 'POST', headers: hdr, body: JSON.stringify({ action: 'war_turn' }) })).json(); if (r?.data?.ok) queueSync(); } catch (e) {} }
 
-function queueSync() { clearTimeout(syncTimer); syncTimer = setTimeout(async () => { await sync(true); loadSel(); loadMine(); if (S.page === 'news') loadNews(); if (S.page === 'social') loadComments(); if (S.page === 'land') reloadBuilds(); if (S.page === 'jabatan' || S.page === 'uu') loadGov(); }, 450); }
+function queueSync() { clearTimeout(syncTimer); syncTimer = setTimeout(async () => { await sync(true); loadSel(); loadMine(); if (S.page === 'news') loadNews(); if (S.page === 'social') loadComments(); if (S.page === 'land') reloadBuilds(); if (S.page === 'jabatan' || S.page === 'uu' || S.page === 'struktur') loadGov(); }, 450); }
 
 async function subscribeRealtime() {
   try { await sb.realtime.setAuth(); if (S.ch) await sb.removeChannel(S.ch); S.ch = sb.channel('cm-world', { config: { private: true, broadcast: { self: false } } }).on('broadcast', { event: 'change' }, queueSync).subscribe((s) => { S.rt = s === 'SUBSCRIBED'; updateConn(); }); } catch (e) { S.rt = false; }
@@ -384,6 +385,7 @@ function tutorial(i) { const s = STEPS[i]; modal({ title: `${i + 1}/${STEPS.leng
 // ================= EVENT =================
 document.addEventListener('click', (e) => {
   const nv = e.target.closest('[data-nav]'); if (nv) { go(nv.dataset.nav); return; }
+  const gt = e.target.closest('[data-go]'); if (gt && PAGES[gt.dataset.go]) { e.preventDefault(); closeModal(); go(gt.dataset.go); return; }
   const el = e.target.closest('[data-act]'); if (el && A[el.dataset.act]) { e.preventDefault(); if (el.disabled) return; A[el.dataset.act](el, e); return; }
   if (!e.target.closest('#notifBox') && !e.target.closest('#bell')) $('#notifBox')?.classList.add('hidden');
   if (!e.target.closest('.search')) $('#sRes')?.classList.add('hidden');
@@ -406,19 +408,20 @@ function releaseBeacon() { if (!S.me?.president || !S.token) return; try { fetch
 addEventListener('pagehide', releaseBeacon);
 
 // ================= JABATAN, LEGISLASI, PERANG NPC (cm-gov) =================
-async function loadGov(force) { if (!S.me) return; const c = S.me.president || S.me.citizenship || S.sel; if (!c) return; try { if (!S.templates) S.templates = (await api('law_templates', {}, { quiet: true })).templates; const d = await api('gov_state', { country: c }, { quiet: true }), j = JSON.stringify(d); if (j !== S._gj || force) { S._gj = j; S.G = d; if (S.page === 'jabatan' || S.page === 'uu') softRender(); } } catch (e) { if (!S.G) S.G = null; } }
+async function loadGov(force) { if (!S.me) return; const c = S.me.president || S.me.citizenship || S.sel; if (!c) return; try { if (!S.templates) S.templates = (await api('law_templates', {}, { quiet: true })).templates; const [d, pst] = await Promise.all([api('gov_state', { country: c }, { quiet: true }), api('pres_state', { country: c }, { quiet: true }).catch(() => null)]), j = JSON.stringify([d, pst]); if (j !== S._gj || force) { S._gj = j; S.G = d; S.P = pst; if (['jabatan', 'uu', 'struktur'].includes(S.page)) softRender(); } } catch (e) { if (!S.G) S.G = null; } }
 const afterGov = async () => { await Promise.all([loadGov(true), loadMine(true), sync(true)]); render(); };
 const gvVal = (id) => ($('#' + id)?.value ?? '').trim();
 function composer({ mode, tid }) {
-  const G = S.G, T = (S.templates || []).find(t => t.id === tid), mp = mode === 'mp', fx0 = T?.fx || {};
+  const G = S.G, T = (S.templates || []).find(t => t.id === tid), mp = mode === 'mp', dec = mode === 'decree', fx0 = T?.fx || {};
   const sl = Object.entries(FXN_C).map(([k, n]) => `<div class="row between" style="gap:8px;margin:4px 0"><label style="width:120px">${n}</label><input type="range" id="fx_${k}" min="-3" max="3" step="0.1" value="${fx0[k] ?? 0}" ${T ? 'disabled' : ''} style="flex:1"><b id="fxv_${k}" style="width:42px;text-align:right">${fx0[k] ?? 0}</b></div>`).join('');
   const calc = () => { const fx = {}; let s = 0; for (const k in FXN_C) { const v = +$('#fx_' + k).value; $('#fxv_' + k).textContent = v; if (Math.abs(v) >= .05) { fx[k] = v; s += Math.abs(v); } } const cost = T ? T.cost : Math.min(1.5, Math.max(.05, .1 + .12 * s)); const el = $('#fxCost'); if (el) el.innerHTML = `Biaya ±<b>${cost.toFixed(2)}%</b> PDB per tahun · total dampak ${s.toFixed(1)}/8`; return fx; };
-  modal({ title: T ? `Ajukan: ${T.name}` : mp ? 'RUU Custom (Anggota Parlemen)' : 'RUU Custom', icon: 'scroll-text', wide: true,
+  modal({ title: dec ? 'Dekret Darurat (Perppu)' : T ? `Ajukan: ${T.name}` : mp ? 'RUU Custom (Anggota Parlemen)' : 'RUU Custom', icon: dec ? 'zap' : 'scroll-text', wide: true,
     body: `<div class="stack"><div><label class="sub">Judul RUU (4–80 karakter)</label><input id="bName" maxlength="80" style="width:100%" value="${esc(T?.name || '')}" ${T ? 'disabled' : ''}></div>
      <div><label class="sub">Isi / maksud RUU</label><textarea id="bDesc" rows="3" maxlength="600" style="width:100%" ${T ? 'disabled' : ''}>${esc(T?.desc || '')}</textarea></div>
      <div class="item"><b>Dampak tahunan</b> <span class="sub">(50% berlaku langsung saat disahkan, sisanya penuh tiap tahun)</span>${sl}<div class="sub" id="fxCost"></div>${T ? '' : `<button class="btn sm" id="bDraft">${ic('sparkles')} Minta Badan Legislasi (Gemini) merancang dampak</button><div class="sub" id="bWhy" style="margin-top:6px"></div>`}</div>
-     <div><label class="sub">${mp ? 'Pidato pengusul (wajib, ≤500 karakter)' : 'Pidato pengantar (opsional, ≤500 karakter)'}</label><textarea id="bSpeech" rows="3" maxlength="500" style="width:100%" placeholder="Yakinkan para anggota parlemen…"></textarea></div></div>`,
-    actions: [{ label: mp ? 'Ajukan ke Sidang Paripurna' : 'Ajukan ke Parlemen', icon: 'gavel', cls: 'pri', keep: true, fn: async (b) => { const body = { template: T?.id, name: gvVal('bName'), desc: gvVal('bDesc'), speech: gvVal('bSpeech') }; if (!T) body.fx = calc();
+     ${dec ? '<div class="banner info">Dekret berlaku seketika tanpa parlemen: kepercayaan −3, stabilitas −2, kepuasan −1.</div>' : ''}<div ${dec ? 'style="display:none"' : ''}><label class="sub">${mp ? 'Pidato pengusul (wajib, ≤500 karakter)' : 'Pidato pengantar (opsional, ≤500 karakter)'}</label><textarea id="bSpeech" rows="3" maxlength="500" style="width:100%" placeholder="Yakinkan para anggota parlemen…"></textarea></div></div>`,
+    actions: [{ label: dec ? 'Terbitkan Dekret' : mp ? 'Ajukan ke Sidang Paripurna' : 'Ajukan ke Parlemen', icon: dec ? 'zap' : 'gavel', cls: 'pri', keep: true, fn: async (b) => { const body = { template: dec ? undefined : T?.id, name: gvVal('bName'), desc: gvVal('bDesc'), speech: gvVal('bSpeech') }; if (!T || dec) body.fx = calc();
+      if (dec) { await act(b, 'decree', body, (r) => r.note, async () => { closeModal(); await afterGov(); }); return; }
       const r = await act(b, mp ? 'law_mp' : 'law_propose', body, null, async (r) => { closeModal(); await afterGov(); showVote(r.passed ? (mp ? 'RUU lolos parlemen' : 'RUU disahkan') : 'RUU ditolak', r.vote, r.note || (r.status === 'accepted' ? 'Presiden menandatangani RUU.' : r.status === 'rejected' && r.passed ? 'Presiden memveto RUU.' : '')); }); } }, { label: 'Batal' }] });
   const el = document.getElementById('modal'); $$('input[type=range]', el).forEach(i => i.oninput = calc); calc();
   $('#bDraft')?.addEventListener('click', async (e) => { const b = e.currentTarget; b.disabled = true; try { const d = await api('law_draft', { name: gvVal('bName'), desc: gvVal('bDesc') }); for (const k in FXN_C) { const v = d.fx[k] ?? 0; $('#fx_' + k).value = v; } calc(); $('#bWhy').innerHTML = `${esc(d.why)}${d.risks?.length ? '<br>Risiko: ' + d.risks.map(esc).join('; ') : ''}`; } catch (er) {} b.disabled = false; });
@@ -428,7 +431,15 @@ async function trySucceed() { if (succBusy || !S.me || S.me.president || !S.G?.i
 setInterval(trySucceed, 15000);
 const FXN_C = { corruption: 'Korupsi', trust: 'Kepercayaan publik', approval: 'Kepuasan rakyat', invest: 'Investasi', prosperity: 'Kemakmuran', stability: 'Stabilitas' };
 Object.assign(A, {
-  gvApply: (el) => { const o = el.dataset.o, nm = S.G.offices[o].name; modal({ title: `Melamar: ${nm}`, icon: 'hand-metal', body: `<p class="sub">Tulis surat lamaran/visi Anda. ${S.G.offices[o].by === 'parlemen' ? 'Partai-partai parlemen akan memilih berdasarkan popularitas dan rekam jejak Anda.' : S.G.presidentLive ? 'Presiden pemain akan memutuskan.' : 'Presiden NPC memutuskan (Gemini) berdasarkan rekam jejak Anda.'}</p><textarea id="gvPitch" rows="4" maxlength="400" style="width:100%" placeholder="Mengapa Anda layak?"></textarea>`, actions: [{ label: 'Kirim Lamaran', icon: 'send', cls: 'pri', keep: true, fn: (b) => act(b, 'office_apply', { country: S.G.country, office: o, pitch: gvVal('gvPitch') }, (r) => r.note || 'Lamaran terkirim', async () => { closeModal(); await afterGov(); }) }, { label: 'Batal' }] }); },
+  gvApply: (el) => { const o = el.dataset.o, M = S.G.offices[o], c = cty(S.G.country); openDocs({ title: `Surat Lamaran — ${M.name}`, office: M.name, country: c?.name || S.G.country, name: S.me?.name || 'Pelamar', submitLabel: 'Kirim Lamaran',
+      info: `<b>${esc(M.name)}</b><br>Diputuskan oleh: ${S.G.presidentLive ? 'presiden pemain' : 'presiden NPC (Gemini, menilai rekam jejak Anda)'}.${M.dom?.length ? `<br>Wewenang usulan kebijakan: ${esc(M.dom.join(', '))}.` : ''}<br>Masa jabatan: ${M.term} tahun simulasi.<br>Tip: surat yang jelas, terukur, dan menyebut program kerja lebih meyakinkan.`,
+      onSubmit: async (html, title) => { const r = await act(null, 'office_apply', { country: S.G.country, office: o, pitch: html }, (r) => r.note || 'Lamaran terkirim'); if (!r) return false; await afterGov(); return true; } }); },
+  openUN: () => toast('Ruang sidang Majelis Umum PBB segera dibuka', 'info'),
+  gvViewApp: (el) => { const a = (S.G.apps || []).find(x => x.id === +el.dataset.id); if (a) openDocs({ readOnly: true, title: `Lamaran ${a.name} — ${S.G.offices[a.office]?.name || a.office}`, html: a.pitch }); },
+  gvCoal: (el) => act(el, 'coalition_set', { party: el.dataset.p, join: el.dataset.j === '1' }, (r) => r.accepted === false ? r.note : (r.note || 'Koalisi diperbarui'), afterGov),
+  gvDissolve: () => modal({ title: 'Bubarkan parlemen?', icon: 'flame', body: `<p>Pemilu dini digelar seketika: kursi partai bergeser mengikuti kepuasan rakyat, dan pemilu legislatif pemain dibuka. Bila koalisi Anda berkuasa, kepuasan −2 dan stabilitas −2. Hanya sekali per 4 tahun simulasi.</p><textarea id="gvDis" rows="3" maxlength="300" style="width:100%" placeholder="Alasan pembubaran (min 10 karakter)"></textarea>`, actions: [{ label: 'Bubarkan', cls: 'red', keep: true, fn: (b) => act(b, 'parliament_dissolve', { reason: gvVal('gvDis') }, (r) => r.note, async () => { closeModal(); await afterGov(); }) }, { label: 'Batal' }] }),
+  gvAppoint: (el) => { const o = el.dataset.o, P = S.P; const cs = (P.citizens || []); modal({ title: `Tunjuk: ${P.offices[o].name}`, icon: 'user-check', body: cs.length ? `<p class="sub">Pilih warga negara yang akan Anda tunjuk. Pejabat lama (bila jabatan tunggal) otomatis digantikan.</p><select id="gvPerson" style="width:100%">${cs.map(x => `<option value="${esc(x.uid)}" ${x.office ? 'disabled' : ''}>${esc(x.name)}${x.office ? ' — sudah menjabat' : ''}</option>`).join('')}</select>` : '<p>Belum ada warga lain di negara ini. Ajak pemain lain menjadi warga negara Anda.</p>', actions: [...(cs.length ? [{ label: 'Tunjuk', icon: 'check', cls: 'pri', keep: true, fn: (b) => act(b, 'appoint_direct', { office: o, uid: gvVal('gvPerson') }, 'Pejabat ditunjuk', async () => { closeModal(); await afterGov(); }) }] : []), { label: 'Tutup' }] }); },
+  gvAmnesty: () => modal({ title: 'Beri amnesti', icon: 'hand-heart', body: '<p>Amnesti memicu reaksi publik (Gemini): stabilitas biasanya naik, kepercayaan bisa turun. Sekali per 2 tahun simulasi.</p><textarea id="gvAm" rows="3" maxlength="300" style="width:100%" placeholder="Lingkup amnesti (mis. tahanan politik, pelanggaran ringan)"></textarea>', actions: [{ label: 'Berikan', cls: 'pri', keep: true, fn: (b) => act(b, 'amnesty', { scope: gvVal('gvAm') }, (r) => r.reaction || 'Amnesti diberikan', async () => { closeModal(); await afterGov(); }) }, { label: 'Batal' }] }),
   gvResign: () => modal({ title: 'Mundur dari jabatan?', icon: 'door-open', body: '<p>Anda akan kehilangan jabatan ini.</p>', actions: [{ label: 'Mundur', cls: 'red', fn: () => act(null, 'office_resign', {}, 'Anda telah mundur', afterGov) }, { label: 'Batal' }] }),
   gvDismiss: (el) => act(el, 'office_dismiss', { id: +el.dataset.id }, 'Pejabat diberhentikan', afterGov),
   gvAppDecide: (el) => act(el, 'office_decide', { id: +el.dataset.id, accept: el.dataset.v === '1' }, (r) => r.status === 'accepted' ? 'Pejabat dilantik' : 'Lamaran ditolak', afterGov),

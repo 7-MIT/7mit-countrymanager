@@ -12,6 +12,19 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), r1 = (v) => Math.round(v
 const rng = (str) => { let h = 1779033703 ^ str.length; for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); } return () => { h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); return ((h ^= h >>> 16) >>> 0) / 4294967296; }; };
 const pick = (R, a) => a[Math.floor(R() * a.length)];
 const clip = (v, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+const OK_TAGS = new Set(['p', 'br', 'b', 'i', 'u', 's', 'strong', 'em', 'strike', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'a', 'span', 'div', 'hr', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'sub', 'sup', 'font', 'code', 'pre']), OK_CSS = /^(color|background-color|text-align|font-size|font-family|font-weight|font-style|text-decoration|text-decoration-line|margin-left|line-height|border|border-collapse|padding|width)$/;
+function sanitizeHtml(h) { // pembersih HTML sisi server (tag & gaya aman saja); dokumen "Goggle Docs"
+  const s = String(h ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style|iframe|object|embed|svg|math|link|meta|form|textarea|select)[\s\S]*?<\/\1\s*>/gi, '');
+  return s.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g, (m, tag, attrs) => { tag = tag.toLowerCase(); if (!OK_TAGS.has(tag)) return ''; if (m.startsWith('</')) return `</${tag}>`;
+    let out = ''; const re = /([a-zA-Z-]+)\s*=\s*("([^"]*)"|'([^']*)')/g; let x;
+    while ((x = re.exec(attrs))) { const n = x[1].toLowerCase(), v = x[3] ?? x[4] ?? '';
+      if (n === 'style') { const css = v.split(';').map(d => d.trim()).filter(d => { const i = d.indexOf(':'); if (i < 1) return false; const k = d.slice(0, i).trim().toLowerCase(), val = d.slice(i + 1); return OK_CSS.test(k) && !/url\s*\(|expression|javascript|@import/i.test(val); }).join('; '); if (css) out += ` style="${css.replace(/"/g, '')}"`; }
+      else if (tag === 'a' && n === 'href' && /^https?:\/\//i.test(v)) out += ` href="${v.replace(/["<>]/g, '')}" target="_blank" rel="noopener noreferrer"`;
+      else if ((tag === 'td' || tag === 'th') && (n === 'colspan' || n === 'rowspan')) out += ` ${n}="${parseInt(v) || 1}"`;
+      else if (tag === 'font' && (n === 'size' || n === 'color' || n === 'face')) out += ` ${n}="${v.replace(/[^\w#,\s-]/g, '')}"`; }
+    return `<${tag}${out}>`; }).replace(/<(?![a-zA-Z\/])/g, '&lt;');
+}
+const plain = (h) => String(h || '').replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, ' ').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 const txt = (v, max, name, min = 1) => { const s = String(v ?? '').trim(); if (s.length < min) bad(`${name} wajib diisi (min ${min} karakter)`); if (s.length > max) bad(`${name} maksimal ${max} karakter`); return s; };
 const cc = (v) => { const s = String(v ?? '').toUpperCase(); if (!/^[A-Z]{2}$/.test(s)) bad('Kode negara tidak valid'); return s; };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -113,7 +126,7 @@ function lawFrom(body, by, year) {
   const fx = t && !body.fx ? t.fx : cleanFx(body.fx), cost = t && !body.fx ? t.cost : costOf(fx);
   return { id: 'x' + Date.now().toString(36) + Math.floor(Math.random() * 99), name, desc, cat: t?.cat || 'custom', fx, cost, year, by, kind: t ? 'templat' : 'custom' };
 }
-function coalitionSeats(c) { const ps = c.gov.parties || [], tot = ps.reduce((a, p) => a + (p.w || 1), 0) || 1, co = ps.filter(p => (c.gov.coalition || []).includes(p.name)).reduce((a, p) => a + (p.w || 1), 0); return clamp(Math.round(co / tot * 100), 5, 95); }
+function coalitionSeats(c) { const ps = c.gov.parties || [], wt = (p) => p.seats ?? p.w ?? 1, tot = ps.reduce((a, p) => a + wt(p), 0) || 1, co = ps.filter(p => (c.gov.coalition || []).includes(p.name)).reduce((a, p) => a + wt(p), 0); return clamp(Math.round(co / tot * 100), 5, 95); }
 async function floorVote(c, law, sponsor, speech, salt) { // sidang parlemen 100 kursi disimulasikan Gemini, dibatasi ±25 suara dari baseline statistik
   const cs = coalitionSeats(c), R = rng(`${c.code}|${law.id}|${salt}`), fxs = Object.entries(law.fx).map(([k, v]) => `${FXK[k]} ${v > 0 ? '+' : ''}${v}`).join(', ');
   const base = clamp(0.3 + 0.45 * cs / 100 + (c.gov.approval - 50) * 0.002 - sumAbs(law.fx) * 0.008 - law.cost * 0.04 + (sponsor.role === 'presiden' ? 0.05 : 0) + (R() - 0.5) * 0.06, 0.08, 0.92);
@@ -156,7 +169,7 @@ A.gov_state = async ({ u, p, body }) => {
 };
 A.office_apply = async ({ u, p, body }) => {
   const office = String(body.office), O = OFFICES[office]; if (!O) bad('Jabatan tidak dikenal'); if (office === 'dpr') bad('Kursi parlemen diperebutkan lewat pemilu legislatif: daftar sebagai caleg dan raih suara.'); const code = cc(body.country); if (p.citizenship !== code) bad('Hanya warga negara ini yang dapat melamar jabatan di sini', 403);
-  const pitch = txt(body.pitch, 400, 'Surat lamaran / visi', 10), w = await world(), row = await getC(code), c = row.data;
+  const pitch = sanitizeHtml(txt(body.pitch, 14000, 'Surat lamaran', 30)); if (pitch.length > 8000) bad('Surat lamaran terlalu panjang (maks 8.000 karakter termasuk format)'); if (plain(pitch).length < 30) bad('Isi surat lamaran terlalu pendek (min 30 karakter teks)'); const w = await world(), row = await getC(code), c = row.data;
   if (must(await sb.from('cm_countries').select('code').eq('president_uid', u.id).maybeSingle())) bad('Presiden tidak dapat merangkap jabatan lain', 403);
   const rows = await cleanOffices(code, w.year); if ((await myOffice(u.id)).length) bad('Anda sudah memegang satu jabatan. Mundur dahulu untuk melamar yang lain.');
   if (rows.filter(r => r.office === office).length >= O.max) bad('Jabatan ini sudah penuh');
@@ -168,7 +181,7 @@ A.office_apply = async ({ u, p, body }) => {
   const posts = (await sb.from('cm_posts').select('id,likes', { count: 'exact' }).eq('uid', u.id).eq('country', code).limit(200)), likes = (posts.data || []).reduce((a, x) => a + (x.likes || 0), 0);
   const pet = (await sb.from('cm_petitions').select('id', { count: 'exact', head: true }).eq('uid', u.id).eq('country', code)).count || 0;
   const who = O.by === 'parlemen' ? `partai-partai parlemen yang memilih anggota baru (pilih berdasarkan popularitas dan rekam jejak)` : `presiden`;
-  const j = await npcJudge(c, `apakah ${p.name} diterima sebagai ${O.name} (${who} yang memutuskan)`, `Surat lamaran: "${pitch}". Rekam jejak publik pelamar di negara ini: ${posts.count || 0} postingan, total ${likes} suka, ${pet} petisi. Pemegang jabatan lain saat ini: ${rows.filter(r => r.office === office).map(r => r.name).join(', ') || 'tidak ada'}.`, true);
+  const j = await npcJudge(c, `apakah ${p.name} diterima sebagai ${O.name} (${who} yang memutuskan)`, `Surat lamaran: "${clip(plain(pitch), 900)}". Rekam jejak publik pelamar di negara ini: ${posts.count || 0} postingan, total ${likes} suka, ${pet} petisi. Pemegang jabatan lain saat ini: ${rows.filter(r => r.office === office).map(r => r.name).join(', ') || 'tidak ada'}.`, true);
   return await settleApp(app, j.accept, j.why, O.by === 'parlemen' ? 'Partai-partai' : `Presiden ${c.gov.president} (NPC)`, w, c);
 };
 async function settleApp(app, accept, why, by, w, c) {
@@ -327,7 +340,7 @@ async function tallyElection(code, n, year, nw) { // dipanggil saat pergantian t
   const uids = cands.map(x => x.uid), profs = uids.length ? must(await sb.from('cm_profiles').select('uid,citizenship').in('uid', uids)) : [], cit = new Map(profs.map(x => [x.uid, x.citizenship])), valid = cands.filter(x => cit.get(x.uid) === code);
   const votes = must(await sb.from('cm_leg_votes').select('uid,cand_uid').eq('country', code).eq('year', n)), vp = must(await sb.from('cm_profiles').select('uid,citizenship').in('uid', votes.map(v => v.uid).concat(['00000000-0000-0000-0000-000000000000']))), vc = new Set(vp.filter(v => v.citizenship === code).map(v => v.uid)), tally = {}; for (const v of votes) if (vc.has(v.uid)) tally[v.cand_uid] = (tally[v.cand_uid] || 0) + 1;
   const rec = {}; for (const x of valid) { const ps = await sb.from('cm_posts').select('id,likes', { count: 'exact' }).eq('uid', x.uid).eq('country', code).limit(200); rec[x.uid] = { posts: ps.count || 0, likes: (ps.data || []).reduce((a, y) => a + (y.likes || 0), 0), pet: (await sb.from('cm_petitions').select('id', { count: 'exact', head: true }).eq('uid', x.uid).eq('country', code)).count || 0 }; }
-  const partyLine = (c.gov.parties || []).map(p => `${p.name} (bobot ${(p.w || 1).toFixed(1)}${(c.gov.coalition || []).includes(p.name) ? ', koalisi pemerintah' : ', oposisi'})`).join('; ');
+  const partyLine = (c.gov.parties || []).map(p => `${p.name} (${p.seats ?? Math.round((p.w || 1) * 20)} kursi${(c.gov.coalition || []).includes(p.name) ? ', koalisi pemerintah' : ', oposisi'})`).join('; ');
   let appeal = {}; if (valid.length) { const o = await llm(`Kamu mensimulasikan pemilih NPC dalam pemilu legislatif di game simulasi politik (data fiksi) untuk ${dos(c)}.\nPartai: ${partyLine}.\nUntuk SETIAP calon (pemain) beri skor daya tarik 0-100 di mata pemilih NPC berdasarkan platform kampanye, rekam jejak publik, kekuatan partai, status petahana, dan suasana hati rakyat (kepuasan terhadap pemerintah memengaruhi koalisi vs oposisi).\n${valid.map((x, i) => `${i + 1}. [${x.uid}] ${x.name}, partai ${x.note}${x.inc ? ' (PETAHANA)' : ''}; platform: "${clip(x.pitch, 300)}"; rekam jejak: ${rec[x.uid].posts} postingan, ${rec[x.uid].likes} suka, ${rec[x.uid].pet} petisi.`).join('\n')}\nKeluarkan JSON: {"s":[{"u":"uid","appeal":0-100,"why":"satu kalimat, maks 140 karakter"}],"tone":"satu kalimat analisis pemilu, maks 200 karakter"}`, 45000); for (const x of o?.s || []) if (typeof x?.appeal === 'number') appeal[x.u] = { a: clamp(Math.round(x.appeal), 0, 100), why: clip(x.why, 160) }; appeal._tone = clip(o?.tone, 220); }
   const rows = valid.map(x => { const v = tally[x.uid] || 0, a = appeal[x.uid]?.a ?? 40, score = a + Math.min(v, 10) * 10; return { uid: x.uid, name: x.name, party: x.note, incumbent: !!x.inc, votes: v, appeal: a, why: appeal[x.uid]?.why || '', score, won: false }; }).sort((a, b) => b.score - a.score);
   const seats = OFFICES.dpr.max; let k = 0; for (const r of rows) if (k < seats && r.score >= 35) { r.won = true; k++; }
