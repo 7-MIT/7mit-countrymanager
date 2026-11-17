@@ -1,8 +1,7 @@
 name: Deploy country.7mit (GitHub Pages)
+# Dijalankan MANUAL saja (Actions -> Run workflow) setelah Settings -> Pages -> Source = GitHub Actions diaktifkan.
+# Situs produksi dideploy lewat Cloudflare, jadi workflow ini tidak otomatis jalan agar tidak menghasilkan build merah.
 on:
-  push:
-    branches: [main, master]
-    paths-ignore: ['cm/supabase/**', 'README.md']
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,0 +1,9 @@
+.git
+.github
+cm/supabase
+cm/tools
+node_modules
+package.json
+wrangler.jsonc
+.assetsignore
+README.md
