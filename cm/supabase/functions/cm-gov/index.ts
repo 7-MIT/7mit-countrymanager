@@ -64,7 +64,7 @@ const OFFICES = {
   men_infrastruktur: { name: 'Menteri Infrastruktur', grp: 'Eksekutif', max: 1, term: 4, by: 'presiden', dom: ['infra'] },
   men_sosial: { name: 'Menteri Sosial', grp: 'Eksekutif', max: 1, term: 4, by: 'presiden', dom: ['welfare'] },
   men_perdagangan: { name: 'Menteri Perdagangan', grp: 'Eksekutif', max: 1, term: 4, by: 'presiden', dom: ['tariff'] },
-  dpr: { name: 'Anggota Parlemen', grp: 'Legislatif', max: 10, term: 5, by: 'parlemen' },
+  dpr: { name: 'Anggota Parlemen', grp: 'Legislatif', max: 10, term: 4, by: 'pemilu' },
   hakim: { name: 'Hakim Mahkamah Agung', grp: 'Yudikatif', max: 5, term: 8, by: 'presiden' },
   jaksa: { name: 'Jaksa Agung', grp: 'Yudikatif', max: 1, term: 4, by: 'presiden' },
   bank: { name: 'Gubernur Bank Sentral', grp: 'Eksekutif', max: 1, term: 5, by: 'presiden' },
@@ -118,7 +118,8 @@ async function floorVote(c, law, sponsor, speech, salt) { // sidang parlemen 100
   const cs = coalitionSeats(c), R = rng(`${c.code}|${law.id}|${salt}`), fxs = Object.entries(law.fx).map(([k, v]) => `${FXK[k]} ${v > 0 ? '+' : ''}${v}`).join(', ');
   const base = clamp(0.3 + 0.45 * cs / 100 + (c.gov.approval - 50) * 0.002 - sumAbs(law.fx) * 0.008 - law.cost * 0.04 + (sponsor.role === 'presiden' ? 0.05 : 0) + (R() - 0.5) * 0.06, 0.08, 0.92);
   const yes0 = Math.round(base * 95), abs0 = 5, no0 = 100 - yes0 - abs0, parties = (c.gov.parties || []).map(x => x.name).slice(0, 5).join(', ') || 'partai-partai';
-  const o = await llm(`Kamu mensimulasikan sidang parlemen 100 kursi dalam game simulasi (data fiksi) untuk negara ${dos(c)}.\nPartai: ${parties}. Kursi koalisi pemerintah: ${cs}.\nRUU "${law.name}": ${law.desc}\nDampak tahunan: ${fxs}; biaya ${law.cost}% PDB per tahun.\nPengusul: ${sponsor.role} ${sponsor.name}${speech ? `. Pidato pengusul: "${clip(speech, 400)}"` : ''}.\nModel statistik memprediksi: setuju ${yes0}, menolak ${no0}, abstain ${abs0}.\nTentukan hasil akhir realistis (boleh menyimpang maksimal 25 suara bila pidato pengusul meyakinkan/lemah atau ada alasan politik kuat) dan tulis 3 kutipan debat anggota parlemen dari partai berbeda (salah satunya menanggapi pidato pengusul bila ada), bahasa Indonesia, maks 160 karakter. yes+no+abstain harus 100.\nKeluarkan JSON: {"yes":int,"no":int,"abstain":int,"debate":[{"who":"Nama (Partai)","said":"..."}]}`);
+  const mps = must(await sb.from('cm_offices').select('name,party').eq('country', c.code).eq('office', 'dpr')), mpLine = mps.length ? `Anggota parlemen pemain: ${mps.map(m => `${m.name} (${m.party || 'independen'}, ${(c.gov.coalition || []).includes(m.party) ? 'koalisi' : 'oposisi'})`).join('; ')}.\n` : '';
+  const o = await llm(`Kamu mensimulasikan sidang parlemen 100 kursi dalam game simulasi (data fiksi) untuk negara ${dos(c)}.\nPartai: ${parties}. Kursi koalisi pemerintah: ${cs}.\n${mpLine}RUU "${law.name}": ${law.desc}\nDampak tahunan: ${fxs}; biaya ${law.cost}% PDB per tahun.\nPengusul: ${sponsor.role} ${sponsor.name}${speech ? `. Pidato pengusul: "${clip(speech, 400)}"` : ''}.\nModel statistik memprediksi: setuju ${yes0}, menolak ${no0}, abstain ${abs0}.\nTentukan hasil akhir realistis (boleh menyimpang maksimal 25 suara bila pidato pengusul meyakinkan/lemah atau ada alasan politik kuat) dan tulis 3 kutipan debat anggota parlemen dari partai berbeda (salah satunya menanggapi pidato pengusul bila ada), bahasa Indonesia, maks 160 karakter. yes+no+abstain harus 100.\nKeluarkan JSON: {"yes":int,"no":int,"abstain":int,"debate":[{"who":"Nama (Partai)","said":"..."}]}`);
   let yes = yes0, no = no0, abs = abs0, debate = [];
   if (o && [o.yes, o.no, o.abstain].every(Number.isInteger) && o.yes + o.no + o.abstain === 100 && o.yes >= 0 && o.no >= 0 && o.abstain >= 0 && Math.abs(o.yes - yes0) <= 25) { yes = o.yes; no = o.no; abs = o.abstain; debate = (o.debate || []).slice(0, 3).map(x => ({ who: clip(x?.who, 60), said: clip(x?.said, 170) })).filter(x => x.who && x.said); }
   return { yes, no, abstain: abs, passed: yes > 50, coalition: cs, debate };
@@ -151,10 +152,10 @@ A.gov_state = async ({ u, p, body }) => {
   const props = isPres ? must(await sb.from('cm_proposals').select('*').eq('country', code).eq('status', 'pending').order('id')) : must(await sb.from('cm_proposals').select('*').eq('country', code).eq('uid', u.id).order('id', { ascending: false }).limit(8));
   const npc = {}; for (const [k, o] of Object.entries(OFFICES)) if (o.cab && c.gov.cabinet?.[o.cab]) npc[k] = c.gov.cabinet[o.cab].name;
   const g = c.gov, bills = g.billsYear?.year === w.year ? g.billsYear.n : 0;
-  return { year: w.year, country: code, citizen: p.citizenship === code, isPresident: isPres, presidentLive: live(row, PRES_TTL * 2), president: c.gov.president, offices: officeMeta(), holders: rows.map(r => ({ id: r.id, office: r.office, uid: r.uid, name: r.name, since: r.since_year, end: r.end_year, me: r.uid === u.id })), npc, mine: mineHere, hasOtherOffice: mine.some(m => m.country !== code), apps, proposals: props, customLaws: g.customLaws || {}, laws: g.laws || [], billsLeft: Math.max(0, 3 - bills), parties: (g.parties || []).map(x => x.name), coalition: g.coalition || [], seats: coalitionSeats(c) };
+  return { year: w.year, country: code, citizen: p.citizenship === code, isPresident: isPres, presidentLive: live(row, PRES_TTL * 2), president: c.gov.president, offices: officeMeta(), holders: rows.map(r => ({ id: r.id, office: r.office, uid: r.uid, name: r.name, since: r.since_year, end: r.end_year, me: r.uid === u.id })), npc, mine: mineHere, hasOtherOffice: mine.some(m => m.country !== code), apps, proposals: props, customLaws: g.customLaws || {}, laws: g.laws || [], billsLeft: Math.max(0, 3 - bills), parties: (g.parties || []).map(x => x.name), coalition: g.coalition || [], seats: coalitionSeats(c), isVP: mineHere.some(m => m.office === 'wapres'), leg: await legState(code, w.year, c, u.id), parties: (g.parties || []).map(x => x.name) };
 };
 A.office_apply = async ({ u, p, body }) => {
-  const office = String(body.office), O = OFFICES[office]; if (!O) bad('Jabatan tidak dikenal'); const code = cc(body.country); if (p.citizenship !== code) bad('Hanya warga negara ini yang dapat melamar jabatan di sini', 403);
+  const office = String(body.office), O = OFFICES[office]; if (!O) bad('Jabatan tidak dikenal'); if (office === 'dpr') bad('Kursi parlemen diperebutkan lewat pemilu legislatif: daftar sebagai caleg dan raih suara.'); const code = cc(body.country); if (p.citizenship !== code) bad('Hanya warga negara ini yang dapat melamar jabatan di sini', 403);
   const pitch = txt(body.pitch, 400, 'Surat lamaran / visi', 10), w = await world(), row = await getC(code), c = row.data;
   if (must(await sb.from('cm_countries').select('code').eq('president_uid', u.id).maybeSingle())) bad('Presiden tidak dapat merangkap jabatan lain', 403);
   const rows = await cleanOffices(code, w.year); if ((await myOffice(u.id)).length) bad('Anda sudah memegang satu jabatan. Mundur dahulu untuk melamar yang lain.');
@@ -285,6 +286,75 @@ A.bank_rate = async ({ u, p, body }) => {
   await news(w.year, code, 'ekonomi', `Gubernur Bank Sentral ${p.name} ${v > c.pol.rate ? 'menaikkan' : 'menurunkan'} suku bunga ${c.pol.rate}% → ${r1(v)}%`, clip(body.reason, 200)); return { ok: true };
 };
 
+
+// ================= PEMILU LEGISLATIF PEMAIN & SUKSESI WAKIL PRESIDEN =================
+const CYCLE = 4, firstCycle = (y) => Math.ceil(y / CYCLE) * CYCLE, legNext = (c, y) => c.gov.leg?.next ?? firstCycle(y);
+const legPhase = (c, y) => { const n = legNext(c, y); return y === n ? 'voting' : y === n - 1 ? 'registration' : 'upcoming'; };
+async function legState(code, y, c, uid) {
+  const n = legNext(c, y), phase = legPhase(c, y), cands = must(await sb.from('cm_applications').select('id,uid,name,pitch,note,year').eq('country', code).eq('office', 'dpr').eq('status', 'candidate').eq('year', n));
+  const inc = (await cleanOffices(code, y)).filter(r => r.office === 'dpr' && r.end_year === n);
+  const mine = uid ? await sb.from('cm_leg_votes').select('cand_uid').eq('uid', uid).eq('country', code).eq('year', n).maybeSingle() : { data: null };
+  const res = must(await sb.from('cm_leg_elections').select('year,result').eq('country', code).order('year', { ascending: false }).limit(1))[0] || null;
+  const called = c.gov.leg?.called ?? -99;
+  return { next: n, phase, cycle: CYCLE, candidates: cands.map(x => ({ id: x.id, uid: x.uid, name: x.name, party: x.note, platform: x.pitch, me: x.uid === uid, incumbent: inc.some(i => i.uid === x.uid) })), incumbents: inc.map(i => ({ uid: i.uid, name: i.name, party: i.party })), myVote: mine.data?.cand_uid || null, last: res, canCall: n > y + 1 && y - called >= 3 };
+}
+A.leg_register = async ({ u, p, body }) => {
+  const code = cc(body.country); if (p.citizenship !== code) bad('Hanya warga negara ini yang dapat mencalonkan diri', 403);
+  const w = await world(), c = (await getC(code)).data, ph = legPhase(c, w.year); if (ph === 'upcoming') bad(`Pendaftaran caleg dibuka mulai tahun ${legNext(c, w.year) - 1} (pemilu tahun ${legNext(c, w.year)})`);
+  if (must(await sb.from('cm_countries').select('code').eq('president_uid', u.id).maybeSingle())) bad('Presiden tidak dapat mencalonkan diri', 403);
+  const mine = await myOffice(u.id); if (mine.some(m => m.office !== 'dpr')) bad('Anda memegang jabatan lain; mundur dahulu untuk mencalonkan diri', 403);
+  const party = txt(body.party, 60, 'Partai'), names = (c.gov.parties || []).map(x => x.name); if (!names.includes(party)) bad('Partai tidak dikenal di negara ini'); const platform = txt(body.platform, 400, 'Platform / janji kampanye', 10), n = legNext(c, w.year);
+  const ex = must(await sb.from('cm_applications').select('id').eq('country', code).eq('office', 'dpr').eq('status', 'candidate').eq('year', n).eq('uid', u.id)); if (ex.length) bad('Anda sudah terdaftar sebagai caleg pada pemilu ini');
+  await sb.from('cm_applications').insert({ country: code, office: 'dpr', uid: u.id, name: p.name, pitch: platform, note: party, status: 'candidate', year: n });
+  await news(w.year, code, 'pemilu', `${p.name} mendaftar sebagai calon anggota parlemen (${party}) di ${c.name}`, clip(platform, 200)); return { ok: true, next: n };
+};
+A.leg_withdraw = async ({ u, p, body }) => { const code = cc(body.country), w = await world(), c = (await getC(code)).data, n = legNext(c, w.year); await sb.from('cm_applications').delete().eq('country', code).eq('office', 'dpr').eq('status', 'candidate').eq('year', n).eq('uid', u.id); await sb.from('cm_leg_votes').delete().eq('country', code).eq('year', n).eq('cand_uid', u.id); return { ok: true }; };
+A.leg_vote = async ({ u, p, body }) => {
+  const code = cc(body.country); if (p.citizenship !== code) bad('Hanya warga negara ini yang dapat memilih', 403); const w = await world(), c = (await getC(code)).data;
+  if (legPhase(c, w.year) !== 'voting') bad('Pemungutan suara belum dibuka'); const n = legNext(c, w.year), cand = must(await sb.from('cm_applications').select('uid').eq('country', code).eq('office', 'dpr').eq('status', 'candidate').eq('year', n).eq('id', Number(body.candidate)).maybeSingle()); if (!cand) bad('Calon tidak ditemukan', 404);
+  const ex = await sb.from('cm_leg_votes').select('uid').eq('uid', u.id).eq('country', code).eq('year', n).maybeSingle(); if (ex.data) bad('Anda sudah memberikan suara pada pemilu ini', 409);
+  must(await sb.from('cm_leg_votes').insert({ uid: u.id, country: code, year: n, cand_uid: cand.uid })); return { ok: true };
+};
+A.leg_call = async ({ u, body }) => {
+  const pr = await presRow(u, body.session); if (!pr) bad('Hanya presiden yang dapat memajukan pemilu', 403); const w = await world(), c = pr.data, n = legNext(c, w.year), called = c.gov.leg?.called ?? -99;
+  if (n <= w.year + 1) bad('Pemilu legislatif sudah dekat'); if (w.year - called < 3) bad('Pemilu dipercepat hanya sekali per 3 tahun simulasi');
+  await cas(pr.code, cc => { cc.gov.leg = { ...(cc.gov.leg || {}), next: w.year + 1, called: w.year }; });
+  await news(w.year, pr.code, 'pemilu', `Presiden ${c.gov.president} memajukan pemilu legislatif ${c.name} ke tahun ${w.year + 1}`, 'Pendaftaran caleg dibuka sekarang; pemungutan suara tahun depan.'); return { ok: true, next: w.year + 1 };
+};
+async function tallyElection(code, n, year, nw) { // dipanggil saat pergantian tahun setelah tahun pemilu
+  const row = await getC(code), c = row.data; const cands = must(await sb.from('cm_applications').select('*').eq('country', code).eq('office', 'dpr').eq('status', 'candidate').eq('year', n));
+  const inc = must(await sb.from('cm_offices').select('*').eq('country', code).eq('office', 'dpr')); for (const i of inc) if (!cands.some(x => x.uid === i.uid)) cands.push({ uid: i.uid, name: i.name, note: i.party || 'Independen', pitch: i.pitch || '', inc: true });
+  const uids = cands.map(x => x.uid), profs = uids.length ? must(await sb.from('cm_profiles').select('uid,citizenship').in('uid', uids)) : [], cit = new Map(profs.map(x => [x.uid, x.citizenship])), valid = cands.filter(x => cit.get(x.uid) === code);
+  const votes = must(await sb.from('cm_leg_votes').select('uid,cand_uid').eq('country', code).eq('year', n)), vp = must(await sb.from('cm_profiles').select('uid,citizenship').in('uid', votes.map(v => v.uid).concat(['00000000-0000-0000-0000-000000000000']))), vc = new Set(vp.filter(v => v.citizenship === code).map(v => v.uid)), tally = {}; for (const v of votes) if (vc.has(v.uid)) tally[v.cand_uid] = (tally[v.cand_uid] || 0) + 1;
+  const rec = {}; for (const x of valid) { const ps = await sb.from('cm_posts').select('id,likes', { count: 'exact' }).eq('uid', x.uid).eq('country', code).limit(200); rec[x.uid] = { posts: ps.count || 0, likes: (ps.data || []).reduce((a, y) => a + (y.likes || 0), 0), pet: (await sb.from('cm_petitions').select('id', { count: 'exact', head: true }).eq('uid', x.uid).eq('country', code)).count || 0 }; }
+  const partyLine = (c.gov.parties || []).map(p => `${p.name} (bobot ${(p.w || 1).toFixed(1)}${(c.gov.coalition || []).includes(p.name) ? ', koalisi pemerintah' : ', oposisi'})`).join('; ');
+  let appeal = {}; if (valid.length) { const o = await llm(`Kamu mensimulasikan pemilih NPC dalam pemilu legislatif di game simulasi politik (data fiksi) untuk ${dos(c)}.\nPartai: ${partyLine}.\nUntuk SETIAP calon (pemain) beri skor daya tarik 0-100 di mata pemilih NPC berdasarkan platform kampanye, rekam jejak publik, kekuatan partai, status petahana, dan suasana hati rakyat (kepuasan terhadap pemerintah memengaruhi koalisi vs oposisi).\n${valid.map((x, i) => `${i + 1}. [${x.uid}] ${x.name}, partai ${x.note}${x.inc ? ' (PETAHANA)' : ''}; platform: "${clip(x.pitch, 300)}"; rekam jejak: ${rec[x.uid].posts} postingan, ${rec[x.uid].likes} suka, ${rec[x.uid].pet} petisi.`).join('\n')}\nKeluarkan JSON: {"s":[{"u":"uid","appeal":0-100,"why":"satu kalimat, maks 140 karakter"}],"tone":"satu kalimat analisis pemilu, maks 200 karakter"}`, 45000); for (const x of o?.s || []) if (typeof x?.appeal === 'number') appeal[x.u] = { a: clamp(Math.round(x.appeal), 0, 100), why: clip(x.why, 160) }; appeal._tone = clip(o?.tone, 220); }
+  const rows = valid.map(x => { const v = tally[x.uid] || 0, a = appeal[x.uid]?.a ?? 40, score = a + Math.min(v, 10) * 10; return { uid: x.uid, name: x.name, party: x.note, incumbent: !!x.inc, votes: v, appeal: a, why: appeal[x.uid]?.why || '', score, won: false }; }).sort((a, b) => b.score - a.score);
+  const seats = OFFICES.dpr.max; let k = 0; for (const r of rows) if (k < seats && r.score >= 35) { r.won = true; k++; }
+  await sb.from('cm_offices').delete().eq('country', code).eq('office', 'dpr');
+  const w = { year }; for (const r of rows.filter(r => r.won)) await sb.from('cm_offices').upsert({ country: code, office: 'dpr', uid: r.uid, name: r.name, party: r.party, since_year: year, end_year: n + CYCLE, pitch: '' }, { onConflict: 'country,office,uid' });
+  await sb.from('cm_applications').update({ status: 'done' }).eq('country', code).eq('office', 'dpr').eq('status', 'candidate').eq('year', n);
+  await sb.from('cm_leg_elections').upsert({ country: code, year: n, result: { candidates: rows, seats, tone: appeal._tone || '', turnout: votes.length } });
+  await cas(code, cc => { cc.gov.leg = { ...(cc.gov.leg || {}), next: n + CYCLE }; });
+  nw.push({ year, country: code, source: 'Komisi Pemilihan Umum', kind: 'pemilu', title: `Pemilu legislatif ${c.name} ${n}: ${rows.filter(r => r.won).length} pemain terpilih`, body: `${rows.filter(r => r.won).map(r => `${r.name} (${r.party})`).join(', ') || 'Tidak ada pemain yang lolos.'} ${appeal._tone || ''}` });
+}
+// suksesi: wakil presiden otomatis menggantikan presiden pemain yang mundur / pergi (bukan karena kalah pemilu)
+async function succeedCheck(u, session) {
+  const mine = (await myOffice(u.id)).find(m => m.office === 'wapres'); if (!mine) return { ok: true, status: 'none' };
+  const code = mine.country, row = await getC(code), w = await world(); if (row.locked) return { ok: true, status: 'locked' };
+  const seen = row.president_seen ? new Date(row.president_seen).getTime() : 0, now = Date.now();
+  let vacant = false;
+  if (row.president_uid) vacant = now - seen > 90_000; else { const rows = must(await sb.from('cm_news').select('title,ts,kind').eq('country', code).order('id', { ascending: false }).limit(6)), lost = rows.find(r => r.kind === 'pemilu' && /KALAH pemilu/.test(r.title) && now - new Date(r.ts).getTime() < 15 * 60_000), left = rows.find(r => /meninggalkan kursi kepresidenan/.test(r.title)); if (lost) return { ok: true, status: 'election-lost' }; vacant = !left || now - new Date(left.ts).getTime() > 25_000; }
+  if (!vacant) return { ok: true, status: 'occupied' };
+  if (must(await sb.from('cm_countries').select('code').eq('president_uid', u.id).maybeSingle())) return { ok: true, status: 'already' };
+  const sess = txt(session, 80, 'Sesi'), upd = await sb.from('cm_countries').update({ president_uid: u.id, president_session: sess, president_seen: new Date().toISOString(), slim: { ...row.slim, playerPres: true, president: mine.name }, updated_at: new Date().toISOString() }).eq('code', code).eq('ver', row.ver).or(`president_uid.is.null,president_seen.lt.${new Date(now - 60_000).toISOString()}`).select('code');
+  if (upd.error) throw new ApiError(upd.error.message, 500); if (!upd.data?.length) return { ok: true, status: 'race' };
+  await sb.from('cm_offices').delete().eq('id', mine.id); await sb.from('cm_profiles').update({ citizenship: code }).eq('uid', u.id); const c = row.data;
+  await news(w.year, code, 'politik', `Wakil Presiden ${mine.name} dilantik menjadi Presiden ${c.name}`, `Menggantikan ${c.gov.president} sesuai konstitusi (suksesi otomatis).`);
+  return { ok: true, status: 'succeeded', country: code };
+}
+A.succeed = async ({ u, body }) => await succeedCheck(u, body.session);
+
 // ---------- giliran tahunan: efek UU custom, perang NPC terhadap pemain ----------
 async function warTurn() {
   const w = await world(); if ((w.gov_year ?? 0) >= w.year) return { skipped: true, year: w.year };
@@ -293,6 +363,8 @@ async function warTurn() {
   const players = rows.filter(r => live(r, PRES_TTL * 60)), out = { laws: 0, wars: 0, battles: 0, joins: 0, peace: 0 }, nw = [];
   // 1) efek tahunan UU custom (+ biaya) di semua negara yang punya
   for (const r of rows) { const cl = r.data.gov.customLaws; if (!cl || !Object.keys(cl).length) continue; await cas(r.code, c => { for (const l of Object.values(c.gov.customLaws || {})) { if (l.year >= year) continue; for (const [k, v] of Object.entries(l.fx)) c.gov[k] = clamp((c.gov[k] ?? 50) + v, 0, 100); const cost = l.cost / 100 * c.gdp; c.treasury = r2(c.treasury - cost); if (c.treasury < 0) { c.debt = r2(c.debt - c.treasury); c.treasury = 0; } } }); out.laws++; }
+  // 1b) pemilu legislatif: hitung suara untuk tahun pemilu sebelumnya
+  const elc = must(await sb.from('cm_applications').select('country').eq('office', 'dpr').eq('status', 'candidate').eq('year', year - 1)); for (const code of [...new Set(elc.map(x => x.country))]) { try { const cd = by[code]?.data; if (cd && legNext(cd, year - 1) === year - 1) await tallyElection(code, year - 1, year, nw); } catch (e) { console.error('tally', e); } }
   // 2) agresi NPC terhadap negara pemain (langka)
   for (const P of players) { const pc = by[P.code].data, cands = rows.filter(r => !r.president_uid && r.code !== P.code && !(pc.war || []).includes(r.code) && !shared(pc, r.data) && (r.data.ai?.tr.hawk ?? 0) >= 0.6 && (r.data.gov.readiness ?? 0) >= 45 && !(r.data.war || []).length && (r.data.region === pc.region || (r.data.rel?.[P.code] || 0) <= -30)).map(r => ({ r, s: (r.data.ai?.tr.hawk ?? 0.5) - (r.data.rel?.[P.code] || 0) / 100 + (r.data.gov.approval < 45 ? 0.2 : 0) + (r.data.gdp > pc.gdp ? 0.1 : -0.1) + R() * 0.2 })).sort((a, b) => b.s - a.s).slice(0, 6);
     if (!cands.length || (pc.war || []).length >= 2) continue;

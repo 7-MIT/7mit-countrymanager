@@ -45,7 +45,7 @@ export function closeModal() { const m = $('#modal'); m.classList.add('hidden');
 
 // ---------- API ----------
 const PROXY = new Set(['propose_trade', 'propose_peace', 'set_policy', 'propose_law', 'repeal_law', 'motion']); // keputusan NPC/parlemen dipertajam Gemini lewat cm-npc
-const GOV = new Set(['law_templates', 'law_draft', 'gov_state', 'office_apply', 'office_decide', 'office_resign', 'office_dismiss', 'proposal_create', 'proposal_decide', 'law_propose', 'law_repeal', 'law_mp', 'court_review', 'prosecute', 'bank_rate', 'war_turn']); // jabatan, RUU custom, perang NPC (cm-gov)
+const GOV = new Set(['law_templates', 'law_draft', 'gov_state', 'office_apply', 'office_decide', 'office_resign', 'office_dismiss', 'proposal_create', 'proposal_decide', 'law_propose', 'law_repeal', 'law_mp', 'court_review', 'prosecute', 'bank_rate', 'war_turn', 'leg_register', 'leg_withdraw', 'leg_vote', 'leg_call', 'succeed']); // jabatan, RUU custom, perang NPC (cm-gov)
 const EXTRA = new Set(['set_profile', 'builds', 'build_place', 'road_place', 'build_remove', 'build_kinds', 'comments', 'comment_create', 'comment_delete', 'comment_hide']);
 export async function api(action, body = {}, { quiet = false, keepalive = false } = {}) {
   const { data: ses } = await sb.auth.getSession();
