@@ -25,9 +25,9 @@ function showGate(msg) {
 }
 
 // ================= SHELL =================
-const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['policy', 'trade', 'treasury', 'politics', 'gov', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
+const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'pop', 'diplo'], ['civic', 'social', 'elections', 'report'], ['admin']];
 function shell() {
-  app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
+  app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : k === 'inbox' ? `<span class="dot hidden" data-rep></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
    <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
    <div class="main"><div class="top"><button class="iconbtn menuBtn" data-act="menu" aria-label="Menu">${ic('menu')}</button>
     <div class="search">${ic('search')}<input id="gSearch" type="search" placeholder="Cari negara atau teritori…" autocomplete="off"><div class="sres hidden" id="sRes"></div></div>
@@ -48,6 +48,7 @@ function updateChrome() {
   const role = me.president ? `${ic('crown')} Presiden <b>${esc(cty(me.president)?.name || me.president)}</b>` : me.citizenship ? `${ic('id-card')} Warga <b>${esc(cty(me.citizenship)?.name || me.citizenship)}</b>` : `${ic('eye')} Pengunjung — pilih negara & klaim atau jadi warga`;
   const rc = $('#roleChip'); if (rc.dataset.k !== role) { rc.dataset.k = role; rc.innerHTML = role; }
   $('#vis').textContent = S.visitors; $$('[data-nav]').forEach(b => b.classList.toggle('on', b.dataset.nav === S.page));
+  const rn = repCount(); $$('[data-rep]').forEach(d => { d.textContent = rn; d.classList.toggle('hidden', !rn); });
   $$('[data-pend]').forEach(d => { d.textContent = S.pending; d.classList.toggle('hidden', !S.pending); });
   const n = S.notifs.filter(x => !x.read).length; const bn = $('#bellN'); bn.textContent = n; bn.classList.toggle('hidden', !n);
   updateConn(); updateAdv(); tickTop();
@@ -73,7 +74,9 @@ function softRender() { if (S.dirty || !$('#pg')) return; const a = document.act
 // ================= DATA =================
 let lastDetail = '', lastMine = '';
 async function loadSel(force) { if (!S.sel) return; try { const d = await api('get_country', { code: S.sel }, { quiet: true }); const j = JSON.stringify(d); if (j !== lastDetail || force) { lastDetail = j; S.D = d; softRender(); } } catch (e) { if (!S.D) S.D = null; } }
-async function loadMine(force) { if (!S.me?.president) { S.M = null; lastMine = ''; return; } try { const d = await api('get_country', { code: S.me.president }, { quiet: true }); const j = JSON.stringify(d); if (j !== lastMine || force) { lastMine = j; S.M = d; softRender(); } } catch (e) {} }
+function repCount() { try { if (!S.M) return 0; const c = S.M.country; return P.citizenReports().filter(r => r.sev > 0 && !S.repDone?.has(P.repKey(c, r.id))).length; } catch (e) { return 0; } }
+function checkReports() { const n = repCount(), key = S.world.year + ':' + (S.me?.president || ''); if (S.repKey !== key) { S.repKey = key; S.repN = 0; } if (n > (S.repN || 0)) { pushNotif({ id: 'rep' + key + n, icon: 'inbox', title: `${n} laporan rakyat menunggu keputusan Anda`, body: 'Buka menu Laporan Rakyat' }); if (S.repN !== undefined && S.repSeen) toast(`${n} laporan rakyat menunggu keputusan Anda`, 'warn'); } S.repN = n; S.repSeen = true; }
+async function loadMine(force) { if (!S.me?.president) { S.M = null; lastMine = ''; return; } try { const d = await api('get_country', { code: S.me.president }, { quiet: true }); const j = JSON.stringify(d); if (j !== lastMine || force) { lastMine = j; S.M = d; checkReports(); softRender(); } } catch (e) {} }
 async function loadElections() { try { const r = await api('elections', {}, { quiet: true }); const latest = new Map(); r.elections.forEach(e => { const o = latest.get(e.country); if (!o || e.year > o.year) latest.set(e.country, e); }); S.elections = [...latest.values()]; if (S.page === 'map') { updateMapStyle(); } } catch (e) {} }
 async function loadNews(more) { const scope = S.filters.newsScope || 'all'; try { const r = await api('news', { country: scope === 'sel' ? S.sel : undefined, before: more && S.newsList?.length ? S.newsList[S.newsList.length - 1].id : undefined, limit: 40 }, { quiet: true }); S.newsList = more ? [...(S.newsList || []), ...r.news] : r.news; if (S.page === 'news') render(); } catch (e) { S.newsList = S.newsList || []; if (S.page === 'news') render(); } }
 export async function reload() { await Promise.all([sync(true), loadSel(true), loadMine(true)]); }
@@ -187,6 +190,12 @@ const A = {
   advVote: (el) => act(null, 'advance_vote', { yes: el.dataset.y === '1' }, (x) => x.status === 'rejected' ? 'Anda menolak. Voting dibatalkan.' : x.advanced ? 'Semua setuju — tahun dimajukan' : 'Suara Anda tercatat', async (x) => { await sync(true); if (x.advanced) { await reload(); showReport(); } }),
   advOpen: () => advModal(true),
   advance: async () => { const b = $('#advBtn'); S.world.advancing = true; updateAdv(); const r = await act(b, 'advance_year', {}, (x) => `Tahun ${x.year} dimulai (paksa admin)`, async () => { await reload(); }); S.world.advancing = false; if (r) { showReport(); } updateChrome(); },
+  repDo: async (el) => { const r = S._reps?.[+el.dataset.i], j = +el.dataset.j; if (!r) return; const c = S.M.country, key = P.repKey(c, r.id); S.repDone = S.repDone || new Set();
+    if (j < 0) { S.repDone.add(key); checkReports(); render(); updateChrome(); return; }
+    const o = r.opts[j]; const orig = el.innerHTML; el.disabled = true; el.innerHTML = `${ic('loader-circle', 'spin')} Memproses…`; refreshIcons();
+    try { const res = await o.run(); S.repDone.add(key); await Promise.all([loadMine(true), sync(true)]); checkReports(); if (res?.vote) showVote(res.vote.passed ? 'Parlemen menyetujui' : 'Parlemen menolak', res.vote, res.note); else toast(res?.note || 'Keputusan dijalankan', 'ok'); render(); updateChrome(); }
+    catch (e) { /* pesan galat sudah ditampilkan */ } finally { if (el.isConnected) { el.disabled = false; el.innerHTML = orig; refreshIcons(); } } },
+  answerPetIn: (el) => A.answerPet(el),
   applyPolicy: (el) => { const patch = {}, c = P_M(); $$('[data-pol]').forEach(i => { const k = i.dataset.pol; if (+i.value !== c.pol[k]) patch[k] = +i.value; }); if (!Object.keys(patch).length) return toast('Tidak ada perubahan', 'warn'); act(el, 'set_policy', { policy: patch }, null, async (r) => { await loadMine(true); S.dirty = false; render(); if (r.vote) showVote(r.vote.passed ? 'Parlemen menyetujui' : 'Parlemen menolak', r.vote, r.note); else toast('Kebijakan diterapkan'); }); },
   resetPolicy: () => { S.dirty = false; render(); },
   proposeTrade: (el) => act(el, 'propose_trade', (() => { const c = P_M(), v = parseFloat(val('trVal')), usdB = val('trCur') === 'USD' ? v : v / c.fx; return { to: val('trTo'), sector: val('trSec'), value: usdB, tariffTo: +val('trT1'), tariffFrom: +val('trT2') }; })(), (r) => r.note || 'Penawaran dikirim', async () => { await loadMine(true); S.dirty = false; render(); }),
