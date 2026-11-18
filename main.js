@@ -8,7 +8,7 @@ import { AREAS } from './areas.js';
 import { Region3D } from './region3d.js';
 import { openDocs, renderDoc } from './docs.js';
 import { openUNGA, closeUNGA } from './unga.js';
-import { openWar3D, warCosts } from './war3d.js';
+import { openWar3D, warCosts, warPower } from './war3d.js';
 import { mountLive } from './live.js';
 import { mountAssistant } from './assistant.js';
 import { initI18n, setLang, syncLangFromAccount, LANGS, state as I18N } from './i18n.js';
@@ -482,6 +482,53 @@ const ISLES = new Set(['ID', 'PH', 'JP', 'GB', 'IE', 'NZ', 'AU', 'CU', 'JM', 'LK
 const HUGE_L = new Set(['RU', 'CA', 'CN', 'US', 'BR', 'AU', 'IN', 'AR', 'KZ', 'DZ', 'CD', 'SA', 'MX', 'ID', 'SD', 'LY']), BIG_L = new Set(['IR', 'MN', 'PE', 'TD', 'NE', 'AO', 'ML', 'ZA', 'CO', 'ET', 'BO', 'MR', 'EG', 'TZ', 'NG', 'VE', 'NA', 'MZ', 'PK', 'TR', 'CL', 'ZM', 'MM', 'AF', 'SO', 'CF', 'UA', 'MG', 'BW', 'KE', 'FR', 'YE', 'TH', 'ES', 'TM', 'CM', 'PG', 'SE', 'UZ', 'MA', 'IQ']), DESERT_L = new Set(['SA', 'DZ', 'LY', 'EG', 'SD', 'TD', 'NE', 'ML', 'MR', 'NA', 'AE', 'KW', 'QA', 'OM', 'YE', 'IQ', 'AU', 'BW', 'TM', 'UZ', 'JO', 'SY', 'TN']), SNOW_L = new Set(['RU', 'CA', 'FI', 'SE', 'NO', 'IS', 'MN', 'GL']);
 const terrainOf = (c) => ({ scale: HUGE_L.has(c) ? 2 : BIG_L.has(c) ? 1.6 : ISLES.has(c) ? 1 : 1.3, forest: HUGE_L.has(c) ? 2.3 : BIG_L.has(c) ? 1.8 : ISLES.has(c) ? 1 : 1.3, biome: DESERT_L.has(c) ? 'gurun' : SNOW_L.has(c) ? 'salju' : 'hutan' });
 const theatreOf = (a, b) => (ISLES.has(a.code) || ISLES.has(b.code) || (a.region && b.region && a.region !== b.region)) ? 'pulau' : 'darat';
+
+// ---------- PvP: perang melawan negara yang dipimpin pemain (simulasi di tiap klien, sinkron lewat Supabase Realtime broadcast) ----------
+function pvpNet(id) {
+  const hs = [], ch = sb.channel('pvp-' + id, { config: { broadcast: { self: false } } }); let sub = false;
+  ch.on('broadcast', { event: 'm' }, (m) => { window.__rx = (window.__rx || 0) + 1; for (const f of hs) { try { f(m.payload); } catch (e) { console.error(e); } } }).subscribe((st) => { if (st === 'SUBSCRIBED') sub = true; });
+  return { send: (o) => { try { window.__tx = (window.__tx || 0) + 1; ch.send({ type: 'broadcast', event: 'm', payload: o }); } catch (e) {} }, on: (f) => hs.push(f), close: () => { try { sb.removeChannel(ch); } catch (e) {} },
+    ready: () => new Promise((r) => { const t0 = Date.now(), iv = setInterval(() => { if (sub) { clearInterval(iv); r(true); } else if (Date.now() - t0 > 10000) { clearInterval(iv); r(false); } }, 100); }) };
+}
+function pvpLobby(id, role, label, waitSec, onCancel) {
+  return new Promise(async (resolve) => {
+    const box = document.createElement('div'); box.className = 'pvpwait'; box.innerHTML = `<div class="pw-c">${ic('swords')}<h3>PvP · ${esc(label)}</h3><p id="pwT">Menghubungkan ke lawan…</p><button class="btn" id="pwX">Batal</button></div>`; document.body.appendChild(box); refreshIcons();
+    const net = pvpNet(id); let done = false, hb = null, to = null, left = waitSec;
+    const end = (ok) => { if (done) return; done = true; clearInterval(hb); clearInterval(to); box.remove(); if (!ok) { net.close(); resolve(null); } else resolve(net); };
+    box.querySelector('#pwX').onclick = () => { try { onCancel?.(); } catch (e) {} end(false); };
+    net.on((m) => { if (!m || done) return; if (role === 'a' && m.ev === 'hello') { for (let i = 0; i < 3; i++) setTimeout(() => net.send({ ev: 'go' }), i * 250); box.querySelector('#pwT').textContent = 'Lawan bergabung! Bertempur dimulai…'; setTimeout(() => end(true), 1300); } else if (role === 'b' && m.ev === 'go') { box.querySelector('#pwT').textContent = 'Bertempur dimulai…'; setTimeout(() => end(true), 1300); } });
+    if (!(await net.ready())) { toast('Koneksi realtime gagal', 'err'); return end(false); }
+    if (role === 'b') hb = setInterval(() => net.send({ ev: 'hello' }), 700);
+    box.querySelector('#pwT').textContent = role === 'a' ? 'Menunggu lawan bergabung… (' + left + ' dtk)' : 'Menunggu penantang siap…';
+    to = setInterval(() => { left--; if (role === 'a' && !done) box.querySelector('#pwT').textContent = 'Menunggu lawan bergabung… (' + left + ' dtk)'; if (left <= 0) { try { onCancel?.(); } catch (e) {} end(false); } }, 1000);
+  });
+}
+const pvpHeroPick = (role) => new Promise((res) => { const HK = Object.entries(warCosts.HEROES); let hk = 'observe', fin = false; const done = (v) => { if (!fin) { fin = true; res(v); } };
+  modal({ title: 'Anda diserang! Pilih peran di medan perang', icon: 'swords', wide: true, body: `<div class="w3-pick" id="wbH2"><button class="w3-hk on" data-hk="observe">${ic('eye')}<b>Hanya mengamati</b><span>Memimpin pasukan dari markas.</span><em>Gratis</em></button>${HK.map(([k, h]) => `<button class="w3-hk" data-hk="${k}">${ic(h.icon)}<b>${h.name}</b><span>${h.desc}</span><em>${h.cost ? h.cost + ' jt USD' : 'Gratis'}</em></button>`).join('')}</div>`, actions: [{ label: 'Siap bertempur', icon: 'swords', cls: 'pri', fn: () => done(hk) }, { label: 'Tolak', fn: () => done(null) }] });
+  setTimeout(() => { $$('#wbH2 [data-hk]').forEach(b => b.onclick = () => { hk = b.dataset.hk; $$('#wbH2 [data-hk]').forEach(x => x.classList.toggle('on', x === b)); }); }, 0); });
+const pvpOpts = (cfg, role, net) => { const a = role === 'a'; return { pvp: { role, net }, seed: cfg.seed, theatre: cfg.theatre, scale: cfg.scale, forest: cfg.forest, biome: cfg.biome, weather: cfg.weather, me: a ? cfg.a : cfg.b, enemy: a ? cfg.b : cfg.a, budget: a ? cfg.aAlloc : cfg.bAlloc, mods: a ? cfg.aMods : undefined }; };
+async function pvpAttack(code, c) {
+  const power = warPower, ratio = Math.pow(power(c.info(c.ec, c.ed)) / power(c.info(c.mc, c.md)), 1.1), cfg = { seed: 'pvp-' + Math.random().toString(36).slice(2, 9), theatre: c.theatre, ...terrainOf(c.ec.code), weather: ['cerah', 'cerah', 'hujan', 'kabut', 'malam'][Math.floor(Math.random() * 5)], a: c.info(c.mc, c.md), b: c.info(c.ec, c.ed), aAlloc: c.alloc, bAlloc: Math.max(300, Math.min(4200, Math.round(c.alloc * ratio))), aMods: c.sh };
+  let r; try { r = await api('pvp_create', { enemy: code, cfg }, { quiet: true }); } catch (e) { return null; } if (!r?.pvp) return null;
+  toast(`${c.ec.name} dipimpin pemain — menunggu mereka bergabung (PvP)…`, 'ok');
+  const net = await pvpLobby(r.id, 'a', `${c.mc.name} vs ${c.ec.name}`, r.wait || 150, () => api('pvp_cancel', { id: r.id }, { quiet: true }).catch(() => {}));
+  if (!net) { toast('Lawan tidak bergabung — pertempuran melawan komputer', 'ok'); return null; }
+  return { id: r.id, net, opts: pvpOpts(cfg, 'a', net) };
+}
+const pvpAsked = new Set();
+async function pvpJoin(m) {
+  const role0 = S.G?.isVP ? 'wapres' : 'presiden', hk = await pvpHeroPick(role0); if (!hk) return; let j; try { j = await api('pvp_join', { id: m.id }); } catch (e) { return; }
+  const mc = cty(j.b), md = S.M?.country || S.D?.country; let st = null; try { st = await api('war_state', {}, { quiet: true }); } catch (e) {}
+  const role = st?.role || role0, cfg = j.cfg, opts = pvpOpts(cfg, 'b', null); opts.me = { code: mc.code, name: mc.name, flag: mc.flag, gdp: md?.gdp ?? cfg.b.gdp, readiness: md?.gov?.readiness ?? cfg.b.readiness }; opts.mods = st?.shares || { darat: .25, udara: .25, art: .25, intel: .25 };
+  const net = await pvpLobby(j.id, 'b', `${cty(j.a)?.name || j.a} vs ${mc.name}`, 40); if (!net) return toast('Tidak dapat terhubung ke penantang', 'err'); opts.pvp.net = net;
+  openWar3D({ ...opts, hero: hk === 'observe' ? undefined : { kind: hk, role, name: `${role === 'wapres' ? 'Wakil Presiden' : 'Presiden'} ${S.me?.name || ''}` }, getStrategy: async (snap) => (await api('war_strategy', { snap }, { quiet: true })).strategy,
+    onResult: async (R) => { try { await api('pvp_end', { id: j.id, outcome: R.outcome }, { quiet: true }); } catch (e) {} return 'Pertempuran PvP selesai. Dampak diterapkan pada negara penantang; negara Anda tidak terpengaruh langsung.'; }, onClose: () => net.close() });
+}
+async function pvpPoll() { if (!S.me?.president || document.getElementById('war3d') || document.querySelector('.pvpwait') || !$('#modal')?.classList.contains('hidden')) return;
+  try { const r = await api('pvp_poll', {}, { quiet: true }); const m = (r.matches || []).find(x => !pvpAsked.has(x.id)); if (!m) return; pvpAsked.add(m.id); const an = cty(m.a_code)?.name || m.a_code;
+    pushNotif?.({ id: 'pvp' + m.id, icon: 'swords', title: `${an} menyerang Anda (PvP)`, body: 'Bergabung ke medan perang sekarang' });
+    modal({ title: `${an} menyerang negara Anda!`, icon: 'swords', body: `<p>Presiden <b>${esc(an)}</b> menantang Anda bertempur langsung di Medan Perang 3D (PvP — pemain vs pemain). Bergabung dalam 2 menit atau komputer yang akan bertahan.</p>`, actions: [{ label: 'Bergabung PvP', icon: 'swords', cls: 'pri', fn: () => pvpJoin(m) }, { label: 'Abaikan' }] }); } catch (e) {} }
+setInterval(pvpPoll, 6000);
 const wmoney = (v) => v >= 1000 ? (v / 1000).toFixed(1) + ' miliar' : Math.round(v) + ' juta';
 async function startWar(code, training) {
   const ec = cty(code), mineCode = S.me?.president || S.me?.citizenship || S.sel, mc = cty(mineCode); if (!ec || !mc) return toast('Pilih negara dahulu', 'err');
@@ -498,9 +545,10 @@ async function startWar(code, training) {
     const alloc = +$('#wbR').value; let started = null;
     if (!training) { try { btn.disabled = true; started = await api('war_start', { enemy: code, alloc }); } catch (e) { btn.disabled = false; return; } }
     closeModal(); const sh = started?.shares || st?.shares || { darat: .25, udara: .25, art: .25, intel: .25 };
-    openWar3D({ me: info(mc, md), enemy: info(ec, ed), training, theatre, ...terrainOf(ec.code), budget: alloc, mods: sh, getStrategy: async (snap) => (await api('war_strategy', { snap }, { quiet: true })).strategy, hero: hk === 'observe' ? undefined : { kind: hk, role, name: `${role === 'wapres' ? 'Wakil Presiden' : 'Presiden'} ${S.me?.name || ''}` },
-      onResult: async (R) => { if (training) return 'Mode latihan: tidak memengaruhi negara.'; const r = await api('war_result', { enemy: code, outcome: R.outcome, margin: R.margin, secs: R.secs, spent: R.spent, nukes: R.nukes, nuked: R.nuked, heroKills: R.heroKills, heroDeaths: R.heroDeaths }); await Promise.all([sync(true), loadMine(true), loadSel(true)]); render(); return `Dampak diterapkan: kepuasan ${r.approval >= 0 ? '+' : ''}${r.approval}, stabilitas ${r.stability >= 0 ? '+' : ''}${r.stability}, PDB ${r.gdp >= 0 ? '+' : ''}${r.gdp}%, kesiapan ${r.readiness}. Dana dikembalikan ${r.refund} juta USD.${r.nukes ? ' Dunia mengecam penggunaan senjata nuklir.' : ''}${r.heroic ? ' Keberanian di garis depan menaikkan kepuasan.' : ''}${r.reckless ? ' Komandan gugur berulang kali; publik menyesalkan.' : ''}${r.peaceOffer ? ' Lawan mengajukan gencatan senjata (menu Penawaran).' : ''}`; },
-      onClose: () => { if (S.page === 'perang') { loadWar(); render(); } } }); } }, { label: 'Batal' }] });
+    const pv = training ? null : await pvpAttack(code, { mc, ec, md, ed, info, theatre, alloc, sh });
+    openWar3D({ me: info(mc, md), enemy: info(ec, ed), training, theatre, ...terrainOf(ec.code), budget: alloc, mods: sh, ...(pv ? pv.opts : {}), getStrategy: async (snap) => (await api('war_strategy', { snap }, { quiet: true })).strategy, hero: hk === 'observe' ? undefined : { kind: hk, role, name: `${role === 'wapres' ? 'Wakil Presiden' : 'Presiden'} ${S.me?.name || ''}` },
+      onResult: async (R) => { if (training) return 'Mode latihan: tidak memengaruhi negara.'; if (pv) api('pvp_end', { id: pv.id, outcome: R.outcome }, { quiet: true }).catch(() => {}); const r = await api('war_result', { enemy: code, outcome: R.outcome, margin: R.margin, secs: R.secs, spent: R.spent, nukes: R.nukes, nuked: R.nuked, heroKills: R.heroKills, heroDeaths: R.heroDeaths }); await Promise.all([sync(true), loadMine(true), loadSel(true)]); render(); return `Dampak diterapkan: kepuasan ${r.approval >= 0 ? '+' : ''}${r.approval}, stabilitas ${r.stability >= 0 ? '+' : ''}${r.stability}, PDB ${r.gdp >= 0 ? '+' : ''}${r.gdp}%, kesiapan ${r.readiness}. Dana dikembalikan ${r.refund} juta USD.${r.nukes ? ' Dunia mengecam penggunaan senjata nuklir.' : ''}${r.heroic ? ' Keberanian di garis depan menaikkan kepuasan.' : ''}${r.reckless ? ' Komandan gugur berulang kali; publik menyesalkan.' : ''}${r.peaceOffer ? ' Lawan mengajukan gencatan senjata (menu Penawaran).' : ''}`; },
+      onClose: () => { pv?.net.close(); if (S.page === 'perang') { loadWar(); render(); } } }); } }, { label: 'Batal' }] });
   setTimeout(() => { const r = $('#wbR'); if (!r) return; r.oninput = () => { $('#wbV').textContent = r.value; }; $$('#wbH [data-hk]').forEach(b => b.onclick = () => { hk = b.dataset.hk; $$('#wbH [data-hk]').forEach(x => x.classList.toggle('on', x === b)); }); }, 0);
 }
 async function loadWar() { if (!S.me?.president && !S.G?.isVP) { S.W = null; return; } try { S.W = await api('war_state', {}, { quiet: true }); if (S.page === 'perang') softRender(); } catch (e) { S.W = null; } }
@@ -554,3 +602,4 @@ async function boot(session) {
 sb.auth.onAuthStateChange((ev, session) => { if (session) S.token = session.access_token; if (ev === 'SIGNED_OUT') { booted = false; showGate(); } if ((ev === 'SIGNED_IN' || ev === 'INITIAL_SESSION') && session && !booted) boot(session); });
 (async () => { const { data } = await sb.auth.getSession(); if (!data.session) showGate(); else boot(data.session); })();
 window.__cm = { S, sync, go, pick, render, get land() { return LAND; }, get city() { return CITY; } };
+window.__cmWar = { startWar, pvpPoll };

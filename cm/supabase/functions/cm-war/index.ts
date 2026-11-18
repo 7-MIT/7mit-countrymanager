@@ -76,6 +76,22 @@ A.war_result = async ({ u, body }) => {
   let peace = false; if (outcome === 'menang' && margin >= 40 && er && !er.president_uid) { const ex = must(await sb.from('cm_offers').select('id').eq('kind', 'peace').eq('from_c', enemy).eq('to_c', pr.code).eq('status', 'pending')); if (!ex.length) { await sb.from('cm_offers').insert({ kind: 'peace', from_c: enemy, to_c: pr.code, status: 'pending', year: w.year }); peace = true; } }
   return { ok: true, outcome, role, approval: r2(f.a * k + heroic - reckless), stability: f.s, gdp: f.g, readiness: f.rd, refund, spent, nukes, heroic: !!heroic, reckless: !!reckless, peaceOffer: peace };
 };
+
+// ---------- PvP (pemain vs pemain): lobi pertandingan; simulasi berjalan di tiap klien, sinkron lewat Supabase Realtime (broadcast) ----------
+const PVP_WAIT = 150_000, pvpGet = async (id) => { const m = must(await sb.from('cm_pvp').select('*').eq('id', String(id || '')).maybeSingle()); if (!m) bad('Pertandingan tidak ditemukan', 404); return m; };
+A.pvp_create = async ({ u, body }) => {
+  const { row: pr } = await actor(u, body.session), enemy = String(body.enemy || '').toUpperCase(); if (!(pr.data.war || []).includes(enemy)) bad('Negara Anda tidak sedang berperang dengan negara itu');
+  const er = must(await sb.from('cm_countries').select('code,president_uid,president_seen').eq('code', enemy).maybeSingle()); if (!er || !live(er, PRES_TTL * 2) || er.president_uid === u.id) return { ok: true, pvp: false };
+  await sb.from('cm_pvp').update({ status: 'cancel' }).eq('a_uid', u.id).eq('status', 'wait');
+  const cfg = body.cfg && typeof body.cfg === 'object' ? body.cfg : {}; if (JSON.stringify(cfg).length > 20000) bad('Konfigurasi terlalu besar');
+  const m = must(await sb.from('cm_pvp').insert({ a_code: pr.code, b_code: enemy, a_uid: u.id, b_uid: er.president_uid, cfg }).select('id').single());
+  return { ok: true, pvp: true, id: m.id, wait: PVP_WAIT / 1000 };
+};
+A.pvp_poll = async ({ u }) => { const since = new Date(Date.now() - PVP_WAIT).toISOString(); const ms = must(await sb.from('cm_pvp').select('id,a_code,b_code,created_at').eq('b_uid', u.id).eq('status', 'wait').gt('created_at', since).order('created_at', { ascending: false }).limit(3)); return { matches: ms }; };
+A.pvp_status = async ({ u, body }) => { const m = await pvpGet(body.id); if (m.a_uid !== u.id && m.b_uid !== u.id) bad('Bukan peserta', 403); return { status: m.status, result: m.result }; };
+A.pvp_join = async ({ u, body }) => { const m = await pvpGet(body.id); if (m.b_uid !== u.id) bad('Anda bukan lawan pertandingan ini', 403); if (m.status !== 'wait' || Date.now() - new Date(m.created_at).getTime() > PVP_WAIT + 15000) bad('Pertandingan sudah berakhir atau kedaluwarsa'); must(await sb.from('cm_pvp').update({ status: 'live', joined_at: new Date().toISOString() }).eq('id', m.id).eq('status', 'wait').select('id')); return { ok: true, id: m.id, a: m.a_code, b: m.b_code, cfg: m.cfg }; };
+A.pvp_cancel = async ({ u, body }) => { const m = await pvpGet(body.id); if (m.a_uid !== u.id) bad('Bukan penantang', 403); await sb.from('cm_pvp').update({ status: 'cancel' }).eq('id', m.id).eq('status', 'wait'); return { ok: true }; };
+A.pvp_end = async ({ u, body }) => { const m = await pvpGet(body.id); if (m.a_uid !== u.id && m.b_uid !== u.id) bad('Bukan peserta', 403); await sb.from('cm_pvp').update({ status: 'done', result: { by: m.a_uid === u.id ? 'a' : 'b', outcome: String(body.outcome || '').slice(0, 10) } }).eq('id', m.id).neq('status', 'done'); return { ok: true }; };
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   try { const body = await req.json().catch(() => ({})), action = String(body.action || ''); if (!A[action]) bad('Aksi tidak dikenal', 404); const u = await authUser(req), out = await A[action]({ u, body });
