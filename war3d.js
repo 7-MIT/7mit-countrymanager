@@ -51,7 +51,7 @@ const POW = { air: { name: 'Serangan udara', icon: 'plane', cost: 80, cd: 55 }, 
 const BASE_FLAGS = [{ x: -26, z: -14 }, { x: 2, z: 12 }, { x: 28, z: -6 }], FLAGS = BASE_FLAGS.map(f => ({ ...f }));
 const COL = { 1: 0xe8b04a, [-1]: 0x4da3d6 };
 const BIOME = { hutan: { g: [.43, .5, .27, .6, .52, .4], tree: 0x2f5a2f, sky: 0xc9dbe8, ground: 0x59693f }, gurun: { g: [.78, .64, .4, .72, .58, .42], tree: 0x6f7d3a, sky: 0xe8dcc0, ground: 0xb79a63 }, salju: { g: [.9, .93, .96, .78, .82, .88], tree: 0x3f6b55, sky: 0xdfe8f2, ground: 0xdfe6ee } };
-let G = null;
+let G = null; const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches;
 export function closeWar3D() { if (G) { G.dispose(); G = null; } }
 export const warCosts = { U, POW, NUKE_COST, HEROES };
 export function warPower(c) { return Math.sqrt(Math.max(1, c.gdp)) * (.4 + (c.readiness ?? 50) / 100); }
@@ -65,12 +65,12 @@ export function openWar3D(opts) {
 function openWar3DRaw(opts) {
   closeWar3D();
   const me = opts.me, enemy = opts.enemy; THEATRE = opts.theatre === 'pulau' ? 'pulau' : 'darat'; const ISLE = THEATRE === 'pulau'; SC = clamp(opts.scale || 1, .8, 2.2); if (ISLE) SC = Math.min(SC, 1.7); WX = 170 * SC; WZ = 110 * SC; HQX = WX / 2 - 15; SPD = Math.sqrt(SC); FLAGS.forEach((f, i) => { f.x = BASE_FLAGS[i].x * SC; f.z = BASE_FLAGS[i].z * SC; });
-  const seed = hashS(me.code + enemy.code), biomeK = opts.biome || ['hutan', 'gurun', 'salju'][seed % 3], BM = BIOME[biomeK], weather = opts.weather || ['cerah', 'cerah', 'hujan', 'kabut', 'malam'][(seed >> 3) % 5];
-  const WTH = { cerah: { fog: [150, 330], acc: 1, name: 'Cerah' }, hujan: { fog: [70, 210], acc: .92, name: 'Hujan' }, kabut: { fog: [35, 130], acc: .86, name: 'Kabut tebal' }, malam: { fog: [90, 250], acc: .9, name: 'Malam' } }[weather];
+  const seed = hashS(me.code + enemy.code), biomeK = opts.biome || ['hutan', 'gurun', 'salju'][((seed >>> 0) % 3 + 3) % 3], BM = BIOME[biomeK] || BIOME.hutan, weather = opts.weather || ['cerah', 'cerah', 'hujan', 'kabut', 'malam'][((seed >>> 3) % 5 + 5) % 5];
+  const WTH = { cerah: { fog: [150, 330], acc: 1, name: 'Cerah' }, hujan: { fog: [70, 210], acc: .92, name: 'Hujan' }, kabut: { fog: [35, 130], acc: .86, name: 'Kabut tebal' }, malam: { fog: [90, 250], acc: .9, name: 'Malam' } }[weather] || { fog: [150, 330], acc: 1, name: 'Cerah' };
   const root = document.createElement('div'); root.className = 'w3'; root.id = 'war3d'; document.body.appendChild(root);
   root.innerHTML = `<div class="w3-stage"></div><div class="w3-ui"></div><div class="w3-flash" id="w3-flash"></div>`;
   const stage = root.querySelector('.w3-stage'), ui = root.querySelector('.w3-ui');
-  const renderer = new THREE.WebGLRenderer({ antialias: !opts.lite, powerPreference: 'high-performance' }); renderer.setPixelRatio(opts.lite ? 1 : Math.min(devicePixelRatio || 1, 1.5)); renderer.shadowMap.enabled = !opts.lite; renderer.shadowMap.type = THREE.PCFSoftShadowMap; stage.appendChild(renderer.domElement);
+  const renderer = new THREE.WebGLRenderer({ antialias: !opts.lite && !COARSE, powerPreference: 'high-performance' }); renderer.setPixelRatio(opts.lite ? 1 : Math.min(devicePixelRatio || 1, COARSE ? 1.25 : 1.5)); renderer.shadowMap.enabled = !opts.lite; renderer.shadowMap.type = THREE.PCFSoftShadowMap; stage.appendChild(renderer.domElement);
   const night = weather === 'malam', skyCol = new THREE.Color(night ? 0x0b1226 : weather === 'kabut' ? 0xbfc7cd : weather === 'hujan' ? 0x8b9aa8 : BM.sky);
   const scene = new THREE.Scene(); scene.background = skyCol; scene.fog = new THREE.Fog(skyCol, WTH.fog[0] * (.6 + .4 * SC), WTH.fog[1] * (.6 + .4 * SC));
   const camera = new THREE.PerspectiveCamera(48, 1, .5, 900 * SC);
@@ -86,7 +86,7 @@ function openWar3DRaw(opts) {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1100, 1100).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: ISLE ? 0x1d5a78 : BM.ground, roughness: 1 })); ground.position.y = ISLE ? -2.6 : -1.5; scene.add(ground);
   let sea = null, seaV = null; if (ISLE) { const sg = new THREE.PlaneGeometry(900, 900, 56, 56); sg.rotateX(-Math.PI / 2); sea = new THREE.Mesh(sg, new THREE.MeshStandardMaterial({ color: night ? 0x143a58 : 0x2f90bd, transparent: true, opacity: .86, roughness: .25, metalness: .15, flatShading: true })); scene.add(sea); seaV = sg.attributes.position; }
   const rnd = (() => { let s = 7 + seed % 97; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
-  { const tg = new THREE.ConeGeometry(1.6, 5, 6).translate(0, 3.6, 0), tr = new THREE.CylinderGeometry(.25, .35, 1.4, 5).translate(0, .7, 0), arid = biomeK === 'gurun', MAXT = Math.min(opts.lite ? 500 : 1100, Math.round((arid ? 60 : 190) * SC * SC * (opts.forest || 1)));
+  { const tg = new THREE.ConeGeometry(1.6, 5, 6).translate(0, 3.6, 0), tr = new THREE.CylinderGeometry(.25, .35, 1.4, 5).translate(0, .7, 0), arid = biomeK === 'gurun', MAXT = Math.min(opts.lite ? 450 : COARSE ? 700 : 1100, Math.round((arid ? 60 : 190) * SC * SC * (opts.forest || 1)));
     const trees = new THREE.InstancedMesh(tg, new THREE.MeshStandardMaterial({ color: BM.tree, flatShading: true }), MAXT), trunks = new THREE.InstancedMesh(tr, new THREE.MeshStandardMaterial({ color: 0x5b3d22 }), MAXT), m = new THREE.Matrix4(), q = new THREE.Quaternion(), sv = new THREE.Vector3(), pv = new THREE.Vector3(); let n = 0;
     for (let k = 0; k < MAXT * 8 && n < MAXT; k++) { const x = (rnd() - .5) * (TX - 12), z = (rnd() - .5) * (TZ - 12), h = H(x, z); if (h < 1) continue; if (Math.abs(x) > HQX - 14 && Math.abs(z) < 30 * SC) continue; if (FLAGS.some(f => Math.hypot(f.x - x, f.z - z) < 12)) continue; if (Math.abs(z) < 6 * SC && Math.abs(x) < 50 * SC) continue; const s = .7 + rnd() * .9; pv.set(x, h, z); sv.set(s, s, s); m.compose(pv, q, sv); trees.setMatrixAt(n, m); trunks.setMatrixAt(n, m); n++; }
     trees.count = trunks.count = n; trees.castShadow = true; scene.add(trees, trunks);
