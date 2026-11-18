@@ -38,6 +38,7 @@ async function authUser(req) {
   return { id: u.id, email: (u.email || '').toLowerCase(), name: String(md.full_name || md.name || (u.email || 'Warga').split('@')[0]).slice(0, 40) };
 }
 async function profile(u) { let p = must(await sb.from('cm_profiles').select('*').eq('uid', u.id).maybeSingle()); if (!p) p = must(await sb.from('cm_profiles').insert({ uid: u.id, name: u.name }).select().single()); if (p.banned) bad('Akun Anda dibatasi oleh admin UN', 403); return p; }
+const BILL_QUOTA = 10; // kuota RUU presiden per tahun simulasi
 const world = async () => must(await sb.from('cm_world').select('year,gov_year').eq('id', 1).single());
 const getC = async (code) => { const r = must(await sb.from('cm_countries').select('code,data,slim,ver,president_uid,president_seen,president_session').eq('code', code).maybeSingle()); if (!r) bad('Negara tidak ditemukan', 404); return r; };
 const live = (r, ttl = PRES_TTL) => !!(r?.president_uid && r.president_seen && Date.now() - new Date(r.president_seen).getTime() < ttl);
@@ -160,12 +161,14 @@ A.law_draft = async ({ u, body }) => { // Gemini (Badan Legislasi) merancang dam
 };
 A.gov_state = async ({ u, p, body }) => {
   const code = cc(body.country || p.citizenship || 'ID'), w = await world(), row = await getC(code), c = row.data, rows = await cleanOffices(code, w.year);
-  const myPres = body.session ? await presRow(u, body.session) : null, isPres = !!myPres && myPres.code === code, mine = (await myOffice(u.id)), mineHere = mine.filter(m => m.country === code);
-  const apps = isPres ? must(await sb.from('cm_applications').select('*').eq('country', code).eq('status', 'pending').order('id')) : must(await sb.from('cm_applications').select('*').eq('country', code).eq('uid', u.id).order('id', { ascending: false }).limit(5));
-  const props = isPres ? must(await sb.from('cm_proposals').select('*').eq('country', code).eq('status', 'pending').order('id')) : must(await sb.from('cm_proposals').select('*').eq('country', code).eq('uid', u.id).order('id', { ascending: false }).limit(8));
+  const [myPres, mine] = await Promise.all([body.session ? presRow(u, body.session) : null, myOffice(u.id)]), isPres = !!myPres && myPres.code === code, mineHere = mine.filter(m => m.country === code);
+  const [apps, props, leg] = await Promise.all([
+    (isPres ? sb.from('cm_applications').select('*').eq('country', code).eq('status', 'pending').order('id') : sb.from('cm_applications').select('*').eq('country', code).eq('uid', u.id).order('id', { ascending: false }).limit(5)).then(must),
+    (isPres ? sb.from('cm_proposals').select('*').eq('country', code).eq('status', 'pending').order('id') : sb.from('cm_proposals').select('*').eq('country', code).eq('uid', u.id).order('id', { ascending: false }).limit(8)).then(must),
+    legState(code, w.year, c, u.id)]);
   const npc = {}; for (const [k, o] of Object.entries(OFFICES)) if (o.cab && c.gov.cabinet?.[o.cab]) npc[k] = c.gov.cabinet[o.cab].name;
   const g = c.gov, bills = g.billsYear?.year === w.year ? g.billsYear.n : 0;
-  return { year: w.year, country: code, citizen: p.citizenship === code, isPresident: isPres, presidentLive: live(row, PRES_TTL * 2), president: c.gov.president, offices: officeMeta(), holders: rows.map(r => ({ id: r.id, office: r.office, uid: r.uid, name: r.name, since: r.since_year, end: r.end_year, me: r.uid === u.id })), npc, mine: mineHere, hasOtherOffice: mine.some(m => m.country !== code), apps, proposals: props, customLaws: g.customLaws || {}, laws: g.laws || [], billsLeft: Math.max(0, 3 - bills), parties: (g.parties || []).map(x => x.name), coalition: g.coalition || [], seats: coalitionSeats(c), isVP: mineHere.some(m => m.office === 'wapres'), leg: await legState(code, w.year, c, u.id), parties: (g.parties || []).map(x => x.name) };
+  return { year: w.year, country: code, citizen: p.citizenship === code, isPresident: isPres, presidentLive: live(row, PRES_TTL * 2), president: c.gov.president, offices: officeMeta(), holders: rows.map(r => ({ id: r.id, office: r.office, uid: r.uid, name: r.name, since: r.since_year, end: r.end_year, me: r.uid === u.id })), npc, mine: mineHere, hasOtherOffice: mine.some(m => m.country !== code), apps, proposals: props, customLaws: g.customLaws || {}, laws: g.laws || [], billsLeft: Math.max(0, BILL_QUOTA - bills), parties: (g.parties || []).map(x => x.name), coalition: g.coalition || [], seats: coalitionSeats(c), isVP: mineHere.some(m => m.office === 'wapres'), leg, parties: (g.parties || []).map(x => x.name) };
 };
 A.office_apply = async ({ u, p, body }) => {
   const office = String(body.office), O = OFFICES[office]; if (!O) bad('Jabatan tidak dikenal'); if (office === 'dpr') bad('Kursi parlemen diperebutkan lewat pemilu legislatif: daftar sebagai caleg dan raih suara.'); const code = cc(body.country); if (p.citizenship !== code) bad('Hanya warga negara ini yang dapat melamar jabatan di sini', 403);
@@ -241,7 +244,7 @@ A.proposal_decide = async ({ u, body }) => {
 // RUU oleh presiden (templat/custom) & anggota DPR
 A.law_propose = async ({ u, body }) => {
   const pr = await presRow(u, body.session); if (!pr) bad('Hanya presiden yang sedang menjabat yang dapat mengajukan RUU', 403);
-  const w = await world(), c = (await getC(pr.code)).data, bills = c.gov.billsYear?.year === w.year ? c.gov.billsYear.n : 0; if (bills >= 3) bad('Maksimal 3 RUU per tahun simulasi');
+  const w = await world(), c = (await getC(pr.code)).data, bills = c.gov.billsYear?.year === w.year ? c.gov.billsYear.n : 0; if (bills >= BILL_QUOTA) bad(`Maksimal ${BILL_QUOTA} RUU per tahun simulasi`);
   if (Object.keys(c.gov.customLaws || {}).length >= 15) bad('Batas 15 undang-undang custom tercapai; cabut sebagian dahulu');
   const law = lawFrom(body, `Presiden ${c.gov.president}`, w.year); if (Object.values(c.gov.customLaws || {}).some(l => l.name === law.name)) bad('UU dengan judul ini sudah berlaku');
   const vote = await floorVote(c, law, { role: 'presiden', name: c.gov.president }, body.speech, bills);
