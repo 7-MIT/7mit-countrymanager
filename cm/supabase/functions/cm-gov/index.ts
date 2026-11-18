@@ -42,7 +42,7 @@ const BILL_QUOTA = 10; // kuota RUU presiden per tahun simulasi
 const world = async () => must(await sb.from('cm_world').select('year,gov_year').eq('id', 1).single());
 const getC = async (code) => { const r = must(await sb.from('cm_countries').select('code,data,slim,ver,president_uid,president_seen,president_session').eq('code', code).maybeSingle()); if (!r) bad('Negara tidak ditemukan', 404); return r; };
 const live = (r, ttl = PRES_TTL) => !!(r?.president_uid && r.president_seen && Date.now() - new Date(r.president_seen).getTime() < ttl);
-async function presRow(u, session) { if (!session) return null; const r = must(await sb.from('cm_countries').select('code,data,president_seen').eq('president_uid', u.id).eq('president_session', session).maybeSingle()); return r && live(r, PRES_TTL * 2) ? r : null; }
+async function presRow(u, session) { if (!session) return null; const r = must(await sb.from('cm_countries').select('code,data,president_uid,president_seen').eq('president_uid', u.id).eq('president_session', session).maybeSingle()); return r && live(r, PRES_TTL * 2) ? r : null; }
 async function news(year, country, kind, title, body = '', source = 'Harian Dunia') { await sb.from('cm_news').insert({ year, country, source, kind, title: clip(title, 200), body: clip(body, 600) }); }
 async function cas(code, fn) { // ubah data negara dengan penguncian optimistik; slim ikut disinkronkan agar klien melihat perubahan
   for (let i = 0; i < 6; i++) { const row = (await sb.from('cm_countries').select('data,slim,ver').eq('code', code).single()).data; if (!row) return false; const d = structuredClone(row.data); if (fn(d) === false) return false;
