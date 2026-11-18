@@ -357,3 +357,6 @@ button,a,[data-act],[data-nav],input,select,textarea,label{touch-action:manipula
 .lv-tv.has3d .lv-low{bottom:46px}
 
 .lv-tv,.lv-hall{height:min(72vw,660px);min-height:480px}.lv-stage{min-height:480px}
+
+.w3-b.cmd{border-color:rgba(255,215,112,.5)}.w3-b.cmd em{display:none}
+@media(max-width:760px){#w3-grp,#w3-pow,#w3-buy{max-width:calc(100vw - 16px);overflow-x:auto;flex-wrap:nowrap}}
