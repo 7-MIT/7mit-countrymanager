@@ -25,6 +25,22 @@ const per = (d) => r0(d.gdp * 1000 * (d.pol?.defense ?? 2) / 100 * 0.3);
 const shares = (a) => { const t = (a.darat + a.udara + a.art + a.intel) || 100; return { darat: a.darat / t, udara: a.udara / t, art: a.art / t, intel: a.intel / t }; };
 
 const A = {};
+
+// ---------- Wilayah diduduki: pemenang menguasai sebagian wilayah negara yang diinvasi selama perang berlangsung; damai/gencatan mengembalikannya ----------
+async function occSweep() {
+  const rows = must(await sb.from('cm_occ').select('*')); if (!rows.length) return rows; const codes = [...new Set(rows.flatMap(r => [r.holder, r.victim]))], cs = must(await sb.from('cm_countries').select('code,data').in('code', codes)), by = Object.fromEntries(cs.map(c => [c.code, c])), keep = [], w = await world();
+  for (const r of rows) { const h = by[r.holder]; if ((h?.data?.war || []).includes(r.victim)) { keep.push(r); continue; }
+    const mv = Number(r.gdp_move) || 0; if (mv) { await cas(r.holder, d => { d.gdp = r2(Math.max(0.01, d.gdp - mv)); }); await cas(r.victim, d => { d.gdp = r2(d.gdp + mv); }); }
+    await sb.from('cm_occ').delete().eq('id', r.id); await sb.from('cm_news').insert({ year: w.year, country: r.victim, source: 'Kantor Berita Global', kind: 'konflik', title: `Wilayah ${by[r.victim]?.data?.name || r.victim} yang diduduki ${by[r.holder]?.data?.name || r.holder} dikembalikan`, body: 'Perang berakhir lewat perdamaian/gencatan senjata; wilayah yang diinvasi kembali ke pemiliknya semula.' }); }
+  return keep; }
+async function conquer(holder, victim, margin, scale = 1) {
+  const w = await world(), vr = must(await sb.from('cm_countries').select('data').eq('code', victim).maybeSingle()); if (!vr) return 0; const old = must(await sb.from('cm_occ').select('*').eq('holder', holder).eq('victim', victim).maybeSingle());
+  let share = clamp(margin / 100 * 0.45, 0.05, 0.4) * scale; share = Math.min(share, 0.8 - (old?.share || 0)); if (share < 0.03) return 0; share = r2(share);
+  const move = r2(vr.data.gdp * share * 0.6); await cas(victim, d => { d.gdp = r2(Math.max(0.01, d.gdp - move)); d.gov.stability = clamp(d.gov.stability - 2, 0, 100); d.gov.approval = clamp(d.gov.approval - 1, 0, 100); }); await cas(holder, d => { d.gdp = r2(d.gdp + move); d.gov.approval = clamp(d.gov.approval + 1, 0, 100); });
+  if (old) await sb.from('cm_occ').update({ share: r2(old.share + share), gdp_move: r2(Number(old.gdp_move) + move), year: w.year }).eq('id', old.id); else await sb.from('cm_occ').insert({ holder, victim, share, gdp_move: move, year: w.year });
+  const hn = must(await sb.from('cm_countries').select('data').eq('code', holder).maybeSingle())?.data?.name || holder;
+  await sb.from('cm_news').insert({ year: w.year, country: victim, source: 'Kantor Berita Global', kind: 'konflik', title: `${hn} menduduki ${Math.round(share * 100)}% wilayah ${vr.data.name}`, body: `Kemenangan di medan perang membuat ${hn} menguasai sebagian wilayah ${vr.data.name}. Wilayah itu akan dikembalikan bila perang berakhir dengan perdamaian.` }); return share; }
+A.occ_state = async () => { const keep = await occSweep(); return { occ: keep.map(r => ({ holder: r.holder, victim: r.victim, share: Number(r.share), year: r.year })) }; };
 A.war_state = async ({ u, body }) => {
   const { row: pr, role } = await actor(u, body.session), w = await world(); let out = null;
   await cas(pr.code, d => { const wf = accrue(d, w.year); out = { fund: wf.m }; });
@@ -73,8 +89,9 @@ A.war_result = async ({ u, body }) => {
   if (nukes) { // kecaman dunia: hubungan 30 ekonomi terbesar (NPC) ke negara pelaku merosot
     const top = must(await sb.from('cm_countries').select('code,slim,president_uid').order('code')).filter(r => !r.president_uid && r.code !== pr.code).sort((a, b) => (b.slim?.gdp || 0) - (a.slim?.gdp || 0)).slice(0, 30);
     await Promise.all(top.map(r => cas(r.code, d => { d.rel = d.rel || {}; d.rel[pr.code] = clamp((d.rel[pr.code] || 0) - (r.code === enemy ? 45 : 14), -100, 100); }, true))); }
+  let conq = 0; if (outcome === 'menang' && margin >= 25 && er) { try { conq = await conquer(pr.code, enemy, margin, sc); } catch (e) { console.error(e); } }
   let peace = false; if (outcome === 'menang' && margin >= 40 && er && !er.president_uid) { const ex = must(await sb.from('cm_offers').select('id').eq('kind', 'peace').eq('from_c', enemy).eq('to_c', pr.code).eq('status', 'pending')); if (!ex.length) { await sb.from('cm_offers').insert({ kind: 'peace', from_c: enemy, to_c: pr.code, status: 'pending', year: w.year }); peace = true; } }
-  return { ok: true, outcome, role, approval: r2(f.a * k + heroic - reckless), stability: f.s, gdp: f.g, readiness: f.rd, refund, spent, nukes, heroic: !!heroic, reckless: !!reckless, peaceOffer: peace };
+  return { ok: true, outcome, role, approval: r2(f.a * k + heroic - reckless), stability: f.s, gdp: f.g, readiness: f.rd, refund, spent, nukes, heroic: !!heroic, reckless: !!reckless, peaceOffer: peace, conquered: conq };
 };
 
 // ---------- PvP (pemain vs pemain): lobi pertandingan; simulasi berjalan di tiap klien, sinkron lewat Supabase Realtime (broadcast) ----------
@@ -97,7 +114,8 @@ A.pvp_cancel = async ({ u, body }) => { const m = await pvpGet(body.id); if (m.a
 A.pvp_end = async ({ u, body }) => { const m = await pvpGet(body.id); if (m.a_uid !== u.id && m.b_uid !== u.id) bad('Bukan peserta', 403); const isB = m.b_uid === u.id, prev = m.result || {}, outcome = String(body.outcome || '').slice(0, 10); let note = null;
   if (isB && !prev.bDone && m.cfg?.bPaid && FX[outcome]) { const paid = m.cfg.bPaid, spent = clamp(Math.round(Number(body.spent) || 0), 0, paid), refund = r0((paid - spent) * 0.8), f = FX[outcome], w = await world(), nuked = clamp(Math.round(Number(body.nuked) || 0), 0, 1), nukes = clamp(Math.round(Number(body.nukes) || 0), 0, 1);
     await cas(m.b_code, d => { const wf = accrue(d, w.year); wf.m = r0(wf.m + refund); d.gov.approval = clamp(d.gov.approval + f.a - (nukes ? 2 : 0) - (nuked ? 3 : 0), 0, 100); d.gov.stability = clamp(d.gov.stability + f.s - (nukes ? 3 : 0) - (nuked ? 3 : 0), 0, 100); d.gdp = r2(d.gdp * (1 + (f.g - (nuked ? 1.5 : 0)) / 100)); d.gov.readiness = clamp((d.gov.readiness ?? 50) + f.rd, 0, 100); if (nukes) { d.gov.trust = clamp(d.gov.trust - 8, 0, 100); d.gov.nukes = (d.gov.nukes || 0) + 1; } });
-    prev.bDone = true; note = { refund, spent, approval: f.a, stability: f.s, gdp: f.g, readiness: f.rd }; }
+    let conq = 0; if (outcome === 'menang') { const mg = clamp(Math.round(Number(body.margin) || 0), 0, 100); if (mg >= 25) { try { conq = await conquer(m.b_code, m.a_code, mg, 1); } catch (e) { console.error(e); } } }
+    prev.bDone = true; note = { conquered: conq, refund, spent, approval: f.a, stability: f.s, gdp: f.g, readiness: f.rd }; }
   await sb.from('cm_pvp').update({ status: 'done', result: { ...prev, [isB ? 'b' : 'a']: outcome } }).eq('id', m.id); return { ok: true, ...(note || {}) }; };
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
