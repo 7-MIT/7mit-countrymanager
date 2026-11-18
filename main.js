@@ -8,6 +8,7 @@ import { AREAS } from './areas.js';
 import { Region3D } from './region3d.js';
 import { openDocs, renderDoc } from './docs.js';
 import { openUNGA, closeUNGA } from './unga.js';
+import { openWar3D } from './war3d.js';
 import { initI18n, setLang, syncLangFromAccount, LANGS, state as I18N } from './i18n.js';
 import { showStart, stopStart, accountModal } from './start.js';
 
@@ -32,7 +33,7 @@ function showGate(msg) {
 }
 
 // ================= SHELL =================
-const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'struktur', 'jabatan', 'uu', 'pop', 'diplo'], ['civic', 'social', 'publik', 'elections', 'report'], ['admin']];
+const NAV_GROUPS = [['dash', 'map', 'land', 'leader', 'news'], ['inbox', 'policy', 'trade', 'treasury', 'politics', 'gov', 'struktur', 'jabatan', 'uu', 'pop', 'diplo', 'perang'], ['civic', 'social', 'publik', 'elections', 'report'], ['admin']];
 function shell() {
   app.innerHTML = `<div class="shell"><aside class="side" id="side"><div class="brand"><div class="logo"><span class="wordmark" style="font-size:20px">7</span></div><span class="wordmark">country<b>.7mit</b></span></div>${NAV_GROUPS.map(g => g.filter(k => !PAGES[k].admin || S.me.admin).map(k => `<button class="nav" data-nav="${k}">${ic(PAGES[k].i)} <span>${PAGES[k].t}</span>${k === 'trade' || k === 'diplo' ? `<span class="dot hidden" data-pend></span>` : k === 'inbox' ? `<span class="dot hidden" data-rep></span>` : ''}</button>`).join('')).filter(Boolean).join('<div class="sep"></div>')}
    <div style="flex:1"></div><div class="sep"></div><button class="nav" data-act="openUN">${ic('globe')} <span>Sidang PBB</span></button><button class="nav" data-act="openCapital">${ic('building-2')} <span>Kota 3D</span></button><button class="nav" data-act="account">${ic('circle-user-round')} <span>Akun</span></button><button class="nav" data-act="toStart">${ic('house')} <span>Menu awal</span></button><button class="nav" data-act="help">${ic('circle-help')} <span>Bantuan</span></button><button class="nav" data-act="logout">${ic('log-out')} <span>Keluar</span></button></aside>
@@ -359,6 +360,8 @@ const A = {
   pubToggle: (el) => { const P = PUBS(), id = +el.dataset.id; if (P.open.has(id)) P.open.delete(id); else { P.open.add(id); pubComments(id); } S.dirty = false; render(); },
   pubCmSend: (el) => { const id = +el.dataset.id, inp = $('#pcm_' + id); act(el, 'pub_comment', { id, body: inp?.value || '' }, 'Komentar terkirim', async (r) => { const p = PUBS().posts.find(x => x.id === id); if (p && r?.count !== undefined) p.comments = r.count; S.dirty = false; await pubComments(id); render(); }); },
   pubDel: (el) => act(el, 'pub_delete', { id: +el.dataset.id, kind: el.dataset.kind }, 'Dihapus', async () => { const P = PUBS(); if (el.dataset.kind === 'comment') await pubComments(+el.dataset.post); else { P.posts = P.posts.filter(x => x.id !== +el.dataset.id); } render(); }),
+  openWar: async (el) => startWar(el.dataset.e, el.dataset.m === 'train'),
+  openWarTrain: () => { S.filters.wrTo = val('wrTo'); startWar(val('wrTo'), true); },
   govRetry: () => { S.Gerr = false; render(); loadGov(true); },
   cmReplyX: () => { S.replyTo = null; render(); },
   cmLike: async (el) => { const id = +el.dataset.id; try { const r = await api('soc_clike', { id }, { quiet: true }); S.clk = S.clk || new Set(); r.liked ? S.clk.add(id) : S.clk.delete(id); const c = (S.cmts || []).find(x => x.id === id); if (c) c.likes = r.likes; softRender(); } catch (e) {} },
@@ -466,6 +469,15 @@ let wasAway = true; // true saat halaman baru dimuat atau tab sempat disembunyik
 async function restorePresidency() { if (restoring || !wasAway || !S.me || S.me.president || S.inStart || !lastPres() || document.hidden) return; wasAway = false; restoring = true; try { if (await reclaimPresidency()) { await sync(true); if (S.me?.president) { toast('Jabatan presiden dipulihkan', 'ok'); await Promise.all([loadMine(true), loadSel(true), loadGov(true)]); render(); } } } catch (e) {} restoring = false; }
 document.addEventListener('visibilitychange', () => { if (document.hidden) wasAway = true; else { sync(true).then(restorePresidency).catch(() => {}); } }); window.addEventListener('focus', () => restorePresidency()); setTimeout(() => restorePresidency(), 4000);
 document.addEventListener('pres-restored', () => { sync(true).then(() => loadGov(true)).then(() => { if (['jabatan', 'uu', 'struktur'].includes(S.page)) render(); }).catch(() => {}); });
+async function startWar(code, training) {
+  const mine = S.me?.president ? (S.M?.country || S.D?.country) : S.D?.country, ec = cty(code); if (!mine || !ec) return toast('Pilih negara dahulu', 'err');
+  $('#side')?.classList.remove('open'); const mc = cty(mine.code || S.me.president || S.sel);
+  let ed = null; try { ed = (await api('get_country', { code }, { quiet: true }))?.country; } catch (e) {}
+  const info = (x, d) => ({ code: x.code, name: x.name, flag: x.flag, gdp: d?.gdp ?? x.gdp, readiness: d?.gov?.readiness ?? 50 });
+  openWar3D({ me: info(mc, mine), enemy: info(ec, ed), training, auto: false,
+    onResult: async (R) => { if (training) return 'Mode latihan: tidak memengaruhi negara.'; const r = await api('war_result', { enemy: code, outcome: R.outcome, margin: R.margin, secs: R.secs }); await Promise.all([sync(true), loadMine(true), loadSel(true)]); render(); return `Dampak diterapkan: kepuasan ${r.approval >= 0 ? '+' : ''}${r.approval}, stabilitas ${r.stability >= 0 ? '+' : ''}${r.stability}, PDB ${r.gdp >= 0 ? '+' : ''}${r.gdp}%, kesiapan ${r.readiness}.${r.peaceOffer ? ' Lawan mengajukan gencatan senjata (menu Penawaran).' : ''}`; },
+    onClose: () => { if (S.page === 'perang') render(); } });
+}
 let succBusy = false;
 async function trySucceed() { if (succBusy || !S.me || S.me.president || !S.G?.isVP) return; succBusy = true; try { const r = await api('succeed', {}, { quiet: true }); if (r?.status === 'succeeded') { toast('Presiden meninggalkan jabatan: Anda dilantik sebagai Presiden!', 'ok'); pushNotif({ id: 'succ' + Date.now(), icon: 'crown', title: 'Anda dilantik sebagai Presiden', body: 'Suksesi otomatis dari Wakil Presiden' }); await sync(true); await Promise.all([loadMine(true), loadSel(true), loadGov(true)]); updateChrome(); render(); } } catch (e) {} succBusy = false; }
 setInterval(trySucceed, 15000);
