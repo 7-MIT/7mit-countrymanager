@@ -355,3 +355,5 @@ button,a,[data-act],[data-nav],input,select,textarea,label{touch-action:manipula
 .lv-tv,.lv-hall{height:min(62vw,520px);min-height:360px}
 .lv-hall.has3d .lv-bubble{left:50%!important;top:auto!important;bottom:12px;transform:translateX(-50%);width:min(440px,92%)}
 .lv-tv.has3d .lv-low{bottom:46px}
+
+.lv-tv,.lv-hall{height:min(72vw,660px);min-height:480px}.lv-stage{min-height:480px}
