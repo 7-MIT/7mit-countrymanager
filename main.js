@@ -8,7 +8,7 @@ import { AREAS } from './areas.js';
 import { Region3D } from './region3d.js';
 import { openDocs, renderDoc } from './docs.js';
 import { openUNGA, closeUNGA } from './unga.js';
-import { openWar3D } from './war3d.js';
+import { openWar3D, warCosts } from './war3d.js';
 import { initI18n, setLang, syncLangFromAccount, LANGS, state as I18N } from './i18n.js';
 import { showStart, stopStart, accountModal } from './start.js';
 
@@ -362,6 +362,10 @@ const A = {
   pubDel: (el) => act(el, 'pub_delete', { id: +el.dataset.id, kind: el.dataset.kind }, 'Dihapus', async () => { const P = PUBS(); if (el.dataset.kind === 'comment') await pubComments(+el.dataset.post); else { P.posts = P.posts.filter(x => x.id !== +el.dataset.id); } render(); }),
   openWar: async (el) => startWar(el.dataset.e, el.dataset.m === 'train'),
   openWarTrain: () => { S.filters.wrTo = val('wrTo'); startWar(val('wrTo'), true); },
+  warAlloc: (el) => { const a = { darat: +val('al_darat'), udara: +val('al_udara'), art: +val('al_art'), intel: +val('al_intel') }; act(el, 'war_alloc', { a }, 'Alokasi Anggaran Keamanan disimpan', async () => { await loadWar(); render(); }); },
+  warFund: () => modal({ title: 'Danai Anggaran Perang', icon: 'banknote', body: `<p>Pindahkan dana dari kas negara ke Anggaran Perang. Kas: <b>${S.W ? S.W.treasury : '?'}</b> miliar USD.</p><label class="sub">Jumlah (juta USD, 50–20.000)</label><input id="wfAmt" type="number" min="50" max="20000" step="50" value="1000" style="width:100%">`, actions: [{ label: 'Pindahkan', cls: 'pri', keep: true, fn: (b) => act(b, 'war_fund', { amount: +val('wfAmt') }, (r) => `Anggaran Perang kini ${r.fund} juta USD`, async () => { closeModal(); await Promise.all([loadWar(), loadMine(true)]); render(); }) }, { label: 'Batal' }] }),
+  warMobilize: (el) => act(el, 'war_mobilize', {}, (r) => `Mobilisasi: kesiapan keamanan ${r.readiness}`, async () => { await Promise.all([loadWar(), loadMine(true)]); render(); }),
+
   govRetry: () => { S.Gerr = false; render(); loadGov(true); },
   cmReplyX: () => { S.replyTo = null; render(); },
   cmLike: async (el) => { const id = +el.dataset.id; try { const r = await api('soc_clike', { id }, { quiet: true }); S.clk = S.clk || new Set(); r.liked ? S.clk.add(id) : S.clk.delete(id); const c = (S.cmts || []).find(x => x.id === id); if (c) c.likes = r.likes; softRender(); } catch (e) {} },
@@ -437,6 +441,7 @@ document.addEventListener('input', (e) => {
   if (d.input === 'metric') { S.metric = t.value; updateMapStyle(); S.dirty = false; }
   if (d.input === 'trade') P.convPreview(); if (d.input === 'tf') tfPreview();
   if (d.input === 'poCnt') $('#poCnt').textContent = t.value.length + '/500';
+  if (d.input === 'alRng') { const ks = ['darat', 'udara', 'art', 'intel']; ks.forEach(k => { $('#alv_' + k).textContent = $('#al_' + k).value + '%'; }); const sum = ks.reduce((a, k) => a + +$('#al_' + k).value, 0), el = $('#alSum'); if (el) { el.textContent = `Total ${sum}% (harus 100%)`; el.style.color = sum === 100 ? '' : '#ff8a8a'; } }
   if (d.input === 'lb') { S.filters.lbQ = val('lbQ'); S.filters.lbReg = val('lbReg'); S.filters.lbSort = val('lbSort'); S.dirty = false; const pos = t.selectionStart; render(); const q = $('#lbQ'); if (t.id === 'lbQ' && q) { q.focus(); q.setSelectionRange(pos, pos); } }
   if (t.id === 'trTo') S.filters.tradeTo = t.value; if (t.id === 'tfTo') S.filters.trTo = t.value;
 });
@@ -469,15 +474,31 @@ let wasAway = true; // true saat halaman baru dimuat atau tab sempat disembunyik
 async function restorePresidency() { if (restoring || !wasAway || !S.me || S.me.president || S.inStart || !lastPres() || document.hidden) return; wasAway = false; restoring = true; try { if (await reclaimPresidency()) { await sync(true); if (S.me?.president) { toast('Jabatan presiden dipulihkan', 'ok'); await Promise.all([loadMine(true), loadSel(true), loadGov(true)]); render(); } } } catch (e) {} restoring = false; }
 document.addEventListener('visibilitychange', () => { if (document.hidden) wasAway = true; else { sync(true).then(restorePresidency).catch(() => {}); } }); window.addEventListener('focus', () => restorePresidency()); setTimeout(() => restorePresidency(), 4000);
 document.addEventListener('pres-restored', () => { sync(true).then(() => loadGov(true)).then(() => { if (['jabatan', 'uu', 'struktur'].includes(S.page)) render(); }).catch(() => {}); });
+const ISLES = new Set(['ID', 'PH', 'JP', 'GB', 'IE', 'NZ', 'AU', 'CU', 'JM', 'LK', 'MV', 'SG', 'MT', 'CY', 'IS', 'TW', 'BS', 'BB', 'TT', 'HT', 'DO', 'FJ', 'PG', 'MG', 'MU', 'BH', 'KM', 'CV', 'TL', 'WS', 'TO', 'SB', 'VU', 'LC', 'GD', 'KN', 'AG', 'DM', 'SC', 'ST']);
+const theatreOf = (a, b) => (ISLES.has(a.code) || ISLES.has(b.code) || (a.region && b.region && a.region !== b.region)) ? 'pulau' : 'darat';
+const wmoney = (v) => v >= 1000 ? (v / 1000).toFixed(1) + ' miliar' : Math.round(v) + ' juta';
 async function startWar(code, training) {
-  const mine = S.me?.president ? (S.M?.country || S.D?.country) : S.D?.country, ec = cty(code); if (!mine || !ec) return toast('Pilih negara dahulu', 'err');
-  $('#side')?.classList.remove('open'); const mc = cty(mine.code || S.me.president || S.sel);
-  let ed = null; try { ed = (await api('get_country', { code }, { quiet: true }))?.country; } catch (e) {}
-  const info = (x, d) => ({ code: x.code, name: x.name, flag: x.flag, gdp: d?.gdp ?? x.gdp, readiness: d?.gov?.readiness ?? 50 });
-  openWar3D({ me: info(mc, mine), enemy: info(ec, ed), training, auto: false,
-    onResult: async (R) => { if (training) return 'Mode latihan: tidak memengaruhi negara.'; const r = await api('war_result', { enemy: code, outcome: R.outcome, margin: R.margin, secs: R.secs }); await Promise.all([sync(true), loadMine(true), loadSel(true)]); render(); return `Dampak diterapkan: kepuasan ${r.approval >= 0 ? '+' : ''}${r.approval}, stabilitas ${r.stability >= 0 ? '+' : ''}${r.stability}, PDB ${r.gdp >= 0 ? '+' : ''}${r.gdp}%, kesiapan ${r.readiness}.${r.peaceOffer ? ' Lawan mengajukan gencatan senjata (menu Penawaran).' : ''}`; },
-    onClose: () => { if (S.page === 'perang') render(); } });
+  const ec = cty(code), mineCode = S.me?.president || S.me?.citizenship || S.sel, mc = cty(mineCode); if (!ec || !mc) return toast('Pilih negara dahulu', 'err');
+  $('#side')?.classList.remove('open'); let ed = null; try { ed = (await api('get_country', { code }, { quiet: true }))?.country; } catch (e) {} const md = (S.me?.president ? S.M?.country : null) || S.D?.country;
+  let st = null; if (!training) { try { st = await api('war_state', {}, { quiet: true }); } catch (e) { return toast(e.message || 'Tidak dapat memuat anggaran perang', 'err'); } }
+  const info = (x, d) => ({ code: x.code, name: x.name, flag: x.flag, gdp: d?.gdp ?? x.gdp, readiness: d?.gov?.readiness ?? 50 }), theatre = theatreOf(mc, ec), role = st?.role || 'presiden';
+  const HK = Object.entries(warCosts.HEROES), fund = training ? 4000 : st.fund, maxA = training ? 4000 : Math.min(st.maxAlloc, fund), minA = training ? 400 : st.minAlloc, def = Math.min(maxA, training ? 1500 : 900);
+  if (!training && fund < minA) return modal({ title: 'Anggaran Perang tidak cukup', icon: 'banknote', body: `<p>Dana operasi Anda <b>${wmoney(fund)} USD</b>, kurang dari minimum ${minA} juta untuk satu pertempuran. Danai dari kas negara di halaman Medan Perang 3D.</p>`, actions: [{ label: 'Tutup' }] });
+  let hk = 'foot';
+  const body = `<div class="stack"><div class="sub">${ic(theatre === 'pulau' ? 'waves' : 'mountain')} ${theatre === 'pulau' ? 'Pertempuran di seberang laut / pulau: daratan luas dikelilingi laut, kapal perang tersedia.' : 'Pertempuran darat di wilayah perbatasan.'}</div>
+   <div><label class="sub">Dana pertempuran dari Anggaran Perang${training ? ' (latihan: gratis)' : ` (tersedia ${wmoney(fund)} USD)`} — <b id="wbV">${def}</b> juta USD</label><input type="range" id="wbR" min="${minA}" max="${maxA}" step="50" value="${def}" style="width:100%"><div class="sub">Seluruh pasukan, kekuatan khusus, dan rudal nuklir (${warCosts.NUKE_COST} juta USD) dibayar dari dana ini. Sisa dana dikembalikan 80%. Kesiapan keamanan ${st ? st.readiness : Math.round(md?.gov?.readiness ?? 50)} menentukan pasukan awal; alokasi anggaran keamanan menentukan mutu.</div></div>
+   <div><label class="sub">${role === 'wapres' ? 'Wakil Presiden' : 'Presiden'} ikut bertempur — pilih kendaraan:</label><div class="w3-pick" id="wbH">${HK.map(([k, h]) => `<button class="w3-hk ${k === 'foot' ? 'on' : ''}" data-hk="${k}">${ic(h.icon)}<b>${h.name}</b><span>${h.desc}</span><em>${h.cost ? h.cost + ' jt USD' : 'Gratis'}</em></button>`).join('')}</div></div></div>`;
+  modal({ title: training ? 'Latihan Tempur' : `Medan Perang: ${mc.name} vs ${ec.name}`, icon: 'swords', wide: true, body, actions: [{ label: 'Masuk medan perang', icon: 'swords', cls: 'pri', keep: true, fn: async (btn) => {
+    const alloc = +$('#wbR').value; let started = null;
+    if (!training) { try { btn.disabled = true; started = await api('war_start', { enemy: code, alloc }); } catch (e) { btn.disabled = false; return; } }
+    closeModal(); const sh = started?.shares || st?.shares || { darat: .25, udara: .25, art: .25, intel: .25 };
+    openWar3D({ me: info(mc, md), enemy: info(ec, ed), training, theatre, budget: alloc, mods: sh, hero: { kind: hk, role, name: `${role === 'wapres' ? 'Wakil Presiden' : 'Presiden'} ${S.me?.name || ''}` },
+      onResult: async (R) => { if (training) return 'Mode latihan: tidak memengaruhi negara.'; const r = await api('war_result', { enemy: code, outcome: R.outcome, margin: R.margin, secs: R.secs, spent: R.spent, nukes: R.nukes, nuked: R.nuked, heroKills: R.heroKills, heroDeaths: R.heroDeaths }); await Promise.all([sync(true), loadMine(true), loadSel(true)]); render(); return `Dampak diterapkan: kepuasan ${r.approval >= 0 ? '+' : ''}${r.approval}, stabilitas ${r.stability >= 0 ? '+' : ''}${r.stability}, PDB ${r.gdp >= 0 ? '+' : ''}${r.gdp}%, kesiapan ${r.readiness}. Dana dikembalikan ${r.refund} juta USD.${r.nukes ? ' Dunia mengecam penggunaan senjata nuklir.' : ''}${r.heroic ? ' Keberanian di garis depan menaikkan kepuasan.' : ''}${r.reckless ? ' Komandan gugur berulang kali; publik menyesalkan.' : ''}${r.peaceOffer ? ' Lawan mengajukan gencatan senjata (menu Penawaran).' : ''}`; },
+      onClose: () => { if (S.page === 'perang') { loadWar(); render(); } } }); } }, { label: 'Batal' }] });
+  setTimeout(() => { const r = $('#wbR'); if (!r) return; r.oninput = () => { $('#wbV').textContent = r.value; }; $$('#wbH [data-hk]').forEach(b => b.onclick = () => { hk = b.dataset.hk; $$('#wbH [data-hk]').forEach(x => x.classList.toggle('on', x === b)); }); }, 0);
 }
+async function loadWar() { if (!S.me?.president && !S.G?.isVP) { S.W = null; return; } try { S.W = await api('war_state', {}, { quiet: true }); if (S.page === 'perang') softRender(); } catch (e) { S.W = null; } }
+hooks.loadWar = loadWar;
 let succBusy = false;
 async function trySucceed() { if (succBusy || !S.me || S.me.president || !S.G?.isVP) return; succBusy = true; try { const r = await api('succeed', {}, { quiet: true }); if (r?.status === 'succeeded') { toast('Presiden meninggalkan jabatan: Anda dilantik sebagai Presiden!', 'ok'); pushNotif({ id: 'succ' + Date.now(), icon: 'crown', title: 'Anda dilantik sebagai Presiden', body: 'Suksesi otomatis dari Wakil Presiden' }); await sync(true); await Promise.all([loadMine(true), loadSel(true), loadGov(true)]); updateChrome(); render(); } } catch (e) {} succBusy = false; }
 setInterval(trySucceed, 15000);
