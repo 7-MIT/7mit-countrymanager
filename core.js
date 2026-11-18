@@ -61,7 +61,7 @@ export async function reclaimPresidency() { const code = LP(); if (!code) return
 const NEED_PRES = /sedang menjabat|tidak sedang menjabat|Hanya presiden|bukan presiden/i;
 export async function api(action, body = {}, opts = {}) {
   try { const r = await apiRaw(action, body, { ...opts, _tryRe: true }); if (action === 'claim' && body.code) LP(body.code); else if (['release', 'become_citizen', 'leave_citizenship', 'resign'].includes(action)) LP(null); return r; }
-  catch (e) { if (!opts._retried && !['claim', 'release', 'sync'].includes(action) && LP() && NEED_PRES.test(e.message || '') && await reclaimPresidency()) { try { const r = await apiRaw(action, body, { ...opts, _retried: true }); if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('pres-restored')); return r; } catch (e2) { throw e2; } } throw e; }
+  catch (e) { if (!opts._retried && !['claim', 'release', 'sync'].includes(action) && LP() && NEED_PRES.test(e.message || '') && await reclaimPresidency()) { try { const r = await apiRaw(action, body, { ...opts, _retried: true }); if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('pres-restored')); return r; } catch (e2) { throw e2; } } if (!opts.quiet && e.status && !e.handled) { toast(e.message, 'err'); e.handled = true; } throw e; }
 }
 async function apiRaw(action, body = {}, { quiet = false, keepalive = false, _tryRe = false, _retried = false } = {}) {
   if (_tryRe && LP() && quiet === false) quiet = 'defer';
@@ -78,7 +78,11 @@ async function apiRaw(action, body = {}, { quiet = false, keepalive = false, _tr
   return j.data;
 }
 // aksi pemain: menampilkan status memuat pada tombol, hasil sukses/gagal lewat toast
+const SLOW = { law_propose: 'Parlemen sedang bersidang…', law_mp: 'Sidang paripurna berlangsung…', office_apply: 'Presiden menimbang lamaran…', office_decide: 'Memproses keputusan…', proposal_decide: 'Memproses keputusan…', proposal_create: 'Mengirim usulan…', decree: 'Menerbitkan dekret…', amnesty: 'Publik menanggapi amnesti…', coalition_set: 'Partai berunding…', parliament_dissolve: 'Parlemen dibubarkan…', law_draft: 'Badan Legislasi merancang…', court_review: 'Majelis hakim bersidang…', prosecute: 'Kejaksaan menyelidiki…' };
+function busy(action) { const label = SLOW[action] || 'Memproses…'; let el = document.getElementById('busybar'); if (!el) { el = document.createElement('div'); el.id = 'busybar'; document.body.appendChild(el); } const t0 = Date.now(); el.innerHTML = `<span class="spin-i">${ic('loader-circle', 'spin')}</span><b></b><span class="sub"></span>`; refreshIcons(); const tick = () => { el.querySelector('b').textContent = label; el.querySelector('.sub').textContent = Math.round((Date.now() - t0) / 1000) + ' dtk'; }; tick(); const id = setInterval(tick, 500); const timer = setTimeout(() => el.classList.add('on'), 800); return () => { clearInterval(id); clearTimeout(timer); el.classList.remove('on'); }; }
 export async function act(btn, action, body, okMsg, after) {
+  const doneBusy = busy(action); try { return await act2(btn, action, body, okMsg, after); } finally { doneBusy(); } }
+async function act2(btn, action, body, okMsg, after) {
   const orig = btn?.innerHTML; if (btn) { btn.disabled = true; btn.innerHTML = `${ic('loader-circle', 'spin')} Memproses…`; refreshIcons(); }
   try { const r = await api(action, body); if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r) : okMsg, 'ok'); await (after ? after(r) : Promise.resolve()); return r; }
   catch (e) { return null; }

@@ -5,6 +5,7 @@ import { S, $, $$, esc, ic, fmt, compact, usd, loc, cty, ago, when, isPres, myCo
 export const hooks = {}; // diisi main.js: reload(), go(), loadSel(), loadMine(), render()
 const card = (t, i, body, cls = '') => `<div class="card ${cls}"><h3>${ic(i)} ${t}</h3>${body}</div>`;
 const empty = (icon, msg) => `<div class="empty">${ic(icon)}<div>${msg}</div></div>`;
+const govWait = () => S.Gerr ? `<div class="card"><div class="empty">${ic('wifi-off')}<div>Gagal memuat data pemerintahan: ${esc(S.Gerr)}</div><button class="btn pri" data-act="govRetry" style="margin-top:10px">${ic('refresh-cw')} Coba lagi</button></div></div>` : `<div class="sub" style="margin:8px 0">${ic('loader-circle', 'spin')} Memuat data pemerintahan…</div>` + skel();
 const skel = () => `<div class="grid g3"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`;
 const bar = (v, col) => `<div class="bar"><i style="width:${Math.max(0, Math.min(100, v))}%;background:${col || (v > 66 ? 'var(--good)' : v > 38 ? 'var(--warn)' : 'var(--bad)')}"></i></div>`;
 const stat = (label, icon, val, sub = '') => `<div class="card stat"><small>${ic(icon)} ${label}</small><b>${val}</b><em>${sub}</em></div>`;
@@ -346,7 +347,7 @@ admin.after = async () => { if (!S.me.admin || !$('#modBox')) return; try { cons
 
 // ================= PUSAT PEMERINTAHAN (cm-pres) =================
 function struktur() {
-  const P = S.P, G = S.G; if (!P || !G) return skel(); const c = cty(P.country), pres = P.isPresident, O = P.offices, hold = {}; (G.holders || []).forEach(h => (hold[h.office] ||= []).push(h));
+  const P = S.P, G = S.G; if (!P || !G) return govWait(); const c = cty(P.country), pres = P.isPresident, O = P.offices, hold = {}; (G.holders || []).forEach(h => (hold[h.office] ||= []).push(h));
   const link = (pg, icon, t) => `<button class="btn sm" data-go="${pg}">${ic(icon)} ${t}</button>`;
   const leg = card('Legislatif — Parlemen', 'landmark', `<div class="sub">Koalisi pemerintah <b>${P.coalSeats}</b>/100 kursi — ${P.majority ? '<span class="tag g">mayoritas</span>' : '<span class="tag r">minoritas (RUU sulit lolos)</span>'}${P.party ? ` · partai presiden: ${esc(P.party)}` : ''}</div>
    <div class="stack" style="margin-top:8px">${P.parties.map((p, i) => `<div class="item row between wrap"><div><i style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${PARTY_COLORS[i % PARTY_COLORS.length]};margin-right:6px"></i><b>${esc(p.name)}</b> <span class="sub">${p.seats} kursi</span> ${p.coal ? '<span class="tag g">koalisi</span>' : '<span class="tag">oposisi</span>'}</div>${pres ? `<button class="btn sm ${p.coal ? 'red' : 'pri'}" data-act="gvCoal" data-p="${esc(p.name)}" data-j="${p.coal ? 0 : 1}">${ic(p.coal ? 'user-minus' : 'user-plus')} ${p.coal ? 'Keluarkan' : 'Ajak ke koalisi'}</button>` : ''}</div>`).join('')}</div>
@@ -373,7 +374,7 @@ function legCard(G) {
 }
 
 function jabatan() {
-  const G = S.G; const mineP = !!S.me?.president; if (!G) return skel();
+  const G = S.G; const mineP = !!S.me?.president; if (!G) return govWait();
   const O = G.offices, c = cty(G.country), citizen = G.citizen, byOffice = {}; G.holders.forEach(h => (byOffice[h.office] ||= []).push(h));
   const myOff = G.mine[0], canApply = citizen && !G.isPresident && !mineP && !G.mine.length && !G.hasOtherOffice;
   const roleActs = !myOff ? '' : (() => { const o = myOff.office, M = O[o]; const a = [];
@@ -398,7 +399,7 @@ function jabatan() {
   return `${banner}${vpBanner}<div class="grid g2">${mineCard}${apps}${props}${legCard(G)}</div><div class="grid g2" style="margin-top:12px">${grp('Eksekutif', 'building-2')}${grp('Legislatif', 'landmark')}${grp('Yudikatif', 'scale')}</div><div class="sub" style="margin-top:10px">Jabatan terbuka untuk warga negara. Presiden memutuskan lamaran eksekutif dan yudikatif; kursi parlemen diperebutkan lewat pemilu legislatif tiap 4 tahun. Jika presiden adalah NPC, keputusan diambil Gemini berdasarkan rekam jejak Anda (postingan, suka, petisi).</div>`;
 }
 function uu() {
-  const G = S.G; if (!G) return skel(); const c = cty(G.country), O = G.offices, T = S.templates || [], myDpr = G.mine.some(m => m.office === 'dpr'), myHakim = G.mine.some(m => m.office === 'hakim'), canBill = G.isPresident || myDpr, laws = Object.values(G.customLaws || {});
+  const G = S.G; if (!G) return govWait(); const c = cty(G.country), O = G.offices, T = S.templates || [], myDpr = G.mine.some(m => m.office === 'dpr'), myHakim = G.mine.some(m => m.office === 'hakim'), canBill = G.isPresident || myDpr, laws = Object.values(G.customLaws || {});
   const std = (G.laws || []).map(id => ({ id, name: (LAWS[id]?.[0]) || id })).filter(x => LAWS[x.id]);
   const tpl = T.map(t => `<div class="item"><div class="row between wrap"><b>${esc(t.name)}</b><span class="tag">${esc(t.cat)}</span></div><div class="sub">${esc(t.desc)}</div><div style="margin:4px 0">${fxChips(t.fx)} <span class="tag">biaya ${t.cost}% PDB/thn</span></div>${canBill ? `<button class="btn sm pri" data-act="gvBill" data-mode="${G.isPresident ? 'pres' : 'mp'}" data-t="${t.id}">${ic('file-plus')} ${G.isPresident ? 'Ajukan RUU' : 'Ajukan & berpidato'}</button>` : ''}</div>`).join('');
   return `${canBill ? `<div class="banner info">${ic('info')}<div class="grow">${G.isPresident ? `Sisa kuota RUU tahun ini: <b>${G.billsLeft}</b>. ` : ''}RUU diputus sidang parlemen 100 kursi (koalisi ${G.seats} kursi). Pidato yang meyakinkan dapat menggeser suara.</div><button class="btn pri" data-act="gvBill" data-mode="${G.isPresident ? 'pres' : 'mp'}">${ic('pen-line')} Buat RUU custom</button></div>` : `<div class="banner info">${ic('info')}<div>Hanya presiden dan anggota parlemen yang dapat mengajukan RUU. Lamar kursi parlemen di menu Jabatan & Lembaga.</div></div>`}

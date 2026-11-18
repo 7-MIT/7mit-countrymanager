@@ -265,3 +265,8 @@ tr.click:hover{background:rgba(255,255,255,.06)}
 .npop .npi{flex:none;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;background:rgba(255,255,255,.12)}
 .npop .sub{color:rgba(255,255,255,.75);margin-top:2px}
 .npop .npx{flex:none;background:none;border:0;color:inherit;opacity:.6;cursor:pointer;padding:2px}.npop .npx:hover{opacity:1}
+
+/* umpan balik aksi lambat & responsivitas sentuh */
+#busybar{position:fixed;left:50%;top:12px;transform:translate(-50%,-80px);z-index:260;display:flex;gap:10px;align-items:center;padding:9px 16px;border-radius:999px;background:#55101b;border:1px solid rgba(255,255,255,.2);box-shadow:0 10px 30px rgba(0,0,0,.5);color:#fff;transition:transform .25s ease;max-width:calc(100vw - 24px)}
+#busybar.on{transform:translate(-50%,0)}
+button,a,[data-act],[data-nav],input,select,textarea,label{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
