@@ -50,6 +50,14 @@ export class Globe {
     for (const c of list) { const r = this.sizeOf(c), m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 9), new THREE.MeshBasicMaterial({ color: this.colorOf(c) })); m.position.copy(ll2v(c.lat, c.lng, R * 1.004)); m.userData.code = c.code; m.userData.c = c; this.group.add(m); this.markers.set(c.code, m); }
     this.refresh();
   }
+  setOccupied(items) { // items: [{rings:[[lon,lat]...], color}] — wilayah yang diduduki (isi + garis tepi) di permukaan globe
+    for (const o of this.occ || []) { this.group.remove(o); o.traverse(x => { x.geometry?.dispose(); x.material?.dispose(); }); } this.occ = [];
+    for (const it of items || []) { const g = new THREE.Group(), col = new THREE.Color(it.color), pos = [];
+      const sub = (a, b, c, depth) => { const e = (u, v) => Math.hypot(u[0] - v[0], u[1] - v[1]); if (depth > 5 || Math.max(e(a, b), e(b, c), e(c, a)) < 2.2) { pos.push(a, b, c); return; } const m = (u, v) => [(u[0] + v[0]) / 2, (u[1] + v[1]) / 2], ab = m(a, b), bc = m(b, c), ca = m(c, a); sub(a, ab, ca, depth + 1); sub(ab, b, bc, depth + 1); sub(ca, bc, c, depth + 1); sub(ab, bc, ca, depth + 1); };
+      for (const ring of it.rings) { const pts = ring.map(p => new THREE.Vector2(p[0], p[1])); let idx; try { idx = THREE.ShapeUtils.triangulateShape(pts, []); } catch (e) { idx = []; } for (const t of idx) sub(ring[t[0]], ring[t[1]], ring[t[2]], 0);
+        const lp = []; for (let i = 0; i < ring.length; i++) { const a = ring[i], b = ring[(i + 1) % ring.length], n = Math.max(1, Math.ceil(Math.hypot(a[0] - b[0], a[1] - b[1]) / 1.2)); for (let k = 0; k < n; k++) lp.push(ll2v(a[1] + (b[1] - a[1]) * k / n, a[0] + (b[0] - a[0]) * k / n, R * 1.006)); } g.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(lp), new THREE.LineBasicMaterial({ color: col.clone().lerp(new THREE.Color(0xffffff), .35) }))); }
+      const arr = new Float32Array(pos.length * 3); pos.forEach((p, i) => { const v = ll2v(p[1], p[0], R * 1.0035); arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z; }); const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: .55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })); g.add(m); this.group.add(g); this.occ.push(g); } }
   refresh() { for (const m of this.markers.values()) m.material.color.set(this.colorOf(m.userData.c)); if (this.sel) this.setSelected(this.sel); }
   pick(e) {
     const r = this.renderer.domElement.getBoundingClientRect(); this.ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); this.ray.setFromCamera(this.ptr, this.cam);

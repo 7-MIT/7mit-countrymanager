@@ -95,6 +95,11 @@ export class Country3D {
     }
     this.fit(); this.onStatus('');
   }
+  setOccupied(items) { // wilayah diduduki: isi transparan + garis di atas medan (selalu terlihat)
+    if (this.occG) { this.root?.remove?.(this.occG); this.scene.remove(this.occG); this.occG = null; } if (!items?.length || !this.px) return; const g = new THREE.Group(); g.renderOrder = 50;
+    for (const it of items) for (const ring of it.rings) { const shp = new THREE.Shape(ring.map(p => new THREE.Vector2(this.px(p[0], p[1]), this.pz(p[1])))), geo = new THREE.ShapeGeometry(shp); geo.rotateX(Math.PI / 2); const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: it.color, transparent: true, opacity: .42, side: THREE.DoubleSide, depthTest: false, depthWrite: false })); m.position.y = .12; m.renderOrder = 50; g.add(m);
+      const ln = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ring.map(p => new THREE.Vector3(this.px(p[0], p[1]), .15, this.pz(p[1])))), new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false })); ln.renderOrder = 51; g.add(ln); }
+    this.occG = g; this.scene.add(g); }
   waterBump() { const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d'), id = g.createImageData(256, 256); for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) { const v = Math.floor(fbm(x / 24, y / 24, 7) * 255); const k = (y * 256 + x) * 4; id.data[k] = id.data[k + 1] = id.data[k + 2] = v; id.data[k + 3] = 255; } g.putImageData(id, 0, 0); const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(Math.max(4, this.W / 3), Math.max(4, this.H / 3)); return t; }
   addCities(R) {
     if (!this.landCells.length) return; const sc = Math.max(.0035, Math.min(this.diag * .0011, .12)) / 4, nC = Math.min(16, 4 + Math.round(Math.log10(Math.max(1000, this.pop || 1e7)))); this.sc = sc; this.cities = []; this.cars = []; this.pins = new THREE.Group(); this.root.add(this.pins);

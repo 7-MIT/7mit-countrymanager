@@ -7,6 +7,7 @@ import { Country3D, loadOutline } from './country3d.js';
 import { AREAS } from './areas.js';
 import { Region3D } from './region3d.js';
 import { openDocs, renderDoc } from './docs.js';
+import { occRings } from './occshape.js';
 import { openUNGA, closeUNGA } from './unga.js';
 import { openWar3D, warCosts, warPower, warDifficulty, diffLabel } from './war3d.js';
 import { mountLive } from './live.js';
@@ -151,13 +152,17 @@ function computeRank() { const vals = [...S.countries.values()].map(metricVal).f
 const _cx = document.createElement('canvas').getContext('2d'), toHex = (c) => { _cx.fillStyle = '#000'; _cx.fillStyle = c; return _cx.fillStyle; }, mixHex = (a, b, t) => { const p = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)), x = p(toHex(a)), y = p(toHex(b)); return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join(''); };
 const hueOf = (s) => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
 const colorOf3 = (c) => { const t = rankC.get(c.code), base = t == null ? '#334155' : ramp(t), o = (S.occ || []).find(x => x.victim === c.code || x.holder === c.code); if (!o) return base; return o.victim === c.code ? mixHex(base, `hsl(${hueOf(o.holder)},85%,50%)`, Math.min(.85, .35 + o.share)) : base; };
-async function loadOcc() { try { const r = await api('occ_state', {}, { quiet: true }); S.occ = r.occ || []; if (GL || LMAP) updateMapStyle(); if (S.page === 'perang' || S.page === 'wilayah') softRender?.(); } catch (e) {} }
+let occLayer = null, occBusy = false;
+async function buildOccShapes() { if (occBusy) return; occBusy = true; try { const out = []; for (const o of S.occ || []) { const v = cty(o.victim), h = cty(o.holder); if (!v || !h) continue; try { const rings = await occRings(o.victim, [v.lat, v.lng], [h.lat, h.lng], o.share); if (rings.length) out.push({ holder: o.holder, victim: o.victim, share: o.share, rings, color: `hsl(${hueOf(o.holder)},85%,50%)` }); } catch (e) {} } S.occShapes = out;
+    GL?.setOccupied?.(out); if (LMAP) { if (occLayer) { LMAP.removeLayer(occLayer); occLayer = null; } if (out.length) { occLayer = L.layerGroup(); for (const it of out) for (const r of it.rings) L.polygon(r.map(p => [p[1], p[0] > 180 ? p[0] - 360 : p[0]]), { color: '#fff', weight: 1, fillColor: it.color, fillOpacity: .5, interactive: false }).addTo(occLayer); occLayer.addTo(LMAP); } }
+    if (LAND) LAND.setOccupied?.(out.filter(s => s.victim === LAND.code)); } finally { occBusy = false; } }
+async function loadOcc() { try { const r = await api('occ_state', {}, { quiet: true }); const same = JSON.stringify(S.occ || []) === JSON.stringify(r.occ || []); S.occ = r.occ || []; if (!same || !S.occShapes) await buildOccShapes(); if (GL || LMAP) updateMapStyle(); if (S.page === 'perang' || S.page === 'wilayah') softRender?.(); } catch (e) {} }
 hooks.loadOcc = loadOcc; setTimeout(loadOcc, 4000); setInterval(loadOcc, 45000);
 function init3D(el) {
   el.innerHTML = ''; el.style.position = 'relative'; const tip = document.createElement('div'); tip.className = 'gtip hidden'; el.appendChild(tip); computeRank();
   try { GL = new Globe(el, { onPick: (c) => pick(c, true), onHover: (c, e) => { if (!c) { tip.classList.add('hidden'); return; } const x = cty(c), r = el.getBoundingClientRect(); tip.innerHTML = `${x.flag} <b>${esc(x.name)}</b><br><span class="sub">PDB ${usd(x.gdp)} · ${fmt(x.growth, 1)}% · ${esc(x.president)}</span>`; tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top + 14) + 'px'; tip.classList.remove('hidden'); }, colorOf: colorOf3, sizeOf: (c) => 0.032 + Math.log10(c.gdp + 1) * 0.03 }); GL.setSatellites(true); window.__gl = GL; }
   catch (e) { console.error(e); S.mapMode = '2d'; toast('WebGL tidak tersedia, memakai peta 2D', 'warn'); render(); return; }
-  GL.setCountries([...S.countries.values()]); GL.setSelected(S.sel); GL.focus(S.sel, 15); drawRoutes();
+  GL.setCountries([...S.countries.values()]); GL.setOccupied?.(S.occShapes || []); GL.setSelected(S.sel); GL.focus(S.sel, 15); drawRoutes();
 }
 function initMap() {
   destroyMap(); const el = $('#map'); if (el && S.mapMode !== '2d') { init3D(el); return; } if (!el || !window.L) { if (el) el.innerHTML = `<div class="empty">${ic('map-off')}<div>Pustaka peta gagal dimuat.</div></div>`; return; }
@@ -257,7 +262,7 @@ hooks.initLand = async () => {
   destroyLand(); const my = ++landToken, el = $('#land'), c = cty(S.sel); if (!el || !c) return; const msg = $('#landMsg');
   try {
     const outline = await loadOutline(c.code); if (my !== landToken) return;
-    LAND = new Country3D(el, { code: c.code, name: c.name, lat: c.lat, lng: c.lng, outline, mode: S.landMode || '3d', mapbox: S.world.mapbox, onStatus: (t) => { if (msg) { msg.innerHTML = t ? `${ic('loader-circle', 'spin')} ${t}` : ''; msg.style.display = t ? '' : 'none'; refreshIcons(); } } }); LAND.pop = c.pop; S.land.pts = []; S.land.builds = []; S.land.regs = {}; LAND.onClick = landClick; LAND.onHover = (pt, e) => { const el = $('#landInfo'); if (!el) return; if (!pt) { hoverTok++; el.textContent = 'Arahkan kursor ke daratan…'; return; } hoverName(pt); }; landHud(); loadRegions(S.land.level); reloadBuilds(true);
+    LAND = new Country3D(el, { code: c.code, name: c.name, lat: c.lat, lng: c.lng, outline, mode: S.landMode || '3d', mapbox: S.world.mapbox, onStatus: (t) => { if (msg) { msg.innerHTML = t ? `${ic('loader-circle', 'spin')} ${t}` : ''; msg.style.display = t ? '' : 'none'; refreshIcons(); } } }); LAND.pop = c.pop; LAND.setOccupied?.((S.occShapes || []).filter(s => s.victim === c.code)); S.land.pts = []; S.land.builds = []; S.land.regs = {}; LAND.onClick = landClick; LAND.onHover = (pt, e) => { const el = $('#landInfo'); if (!el) return; if (!pt) { hoverTok++; el.textContent = 'Arahkan kursor ke daratan…'; return; } hoverName(pt); }; landHud(); loadRegions(S.land.level); reloadBuilds(true);
     const sc = $('#landScale'); if (sc) sc.innerHTML = `${ic('ruler')} Bentang ±${fmt(LAND.widthKm)} × ${fmt(LAND.heightKm)} km · 1 satuan = 100 km`; refreshIcons(); if (msg && (S.landMode || '3d') === '3d') msg.style.display = 'none';
   } catch (e) { if (msg) msg.innerHTML = `${ic('circle-alert')} ${esc(e.message || 'Gagal memuat wilayah')}`; refreshIcons(); }
 };
