@@ -45,12 +45,11 @@ A.war_state = async ({ u, body }) => {
   const { row: pr, role } = await actor(u, body.session), w = await world(); let out = null;
   await cas(pr.code, d => { const wf = accrue(d, w.year); out = { fund: wf.m }; });
   const d = (await sb.from('cm_countries').select('data').eq('code', pr.code).single()).data.data, g = d.gov, a = g.alloc?.a || ALLOC0;
-  return { fund: out.fund, perYear: per(d), readiness: Math.round(g.readiness ?? 50), defense: d.pol?.defense ?? 2, treasury: r2(d.treasury), alloc: a, allocYear: g.alloc?.year ?? null, canAlloc: (g.alloc?.year ?? -99) < w.year, canMobilize: (g.mobYear ?? -99) < w.year, mobCost: r2(d.gdp * 0.004), nuke: NUKE, maxAlloc: MAX_ALLOC, minAlloc: MIN_ALLOC, shares: shares(a), year: w.year, battles: g.battles?.year === w.year ? g.battles.list || [] : [], nukesUsed: g.nukes || 0, role, battlesVp: g.battles?.year === w.year ? g.battles.vp || [] : [] };
+  return { fund: out.fund, perYear: per(d), readiness: Math.round(g.readiness ?? 50), defense: d.pol?.defense ?? 2, treasury: r2(d.treasury), alloc: a, allocYear: g.alloc?.year ?? null, canAlloc: true, canMobilize: true, mobCost: r2(d.gdp * 0.004), nuke: NUKE, maxAlloc: MAX_ALLOC, minAlloc: MIN_ALLOC, shares: shares(a), year: w.year, battles: [], nukesUsed: g.nukes || 0, role, battlesVp: [] };
 };
 A.war_alloc = async ({ u, body }) => {
   const pr = await needPres(u, body.session), w = await world(), a = body.a || {}, v = { darat: Number(a.darat), udara: Number(a.udara), art: Number(a.art), intel: Number(a.intel) };
   if (Object.values(v).some(x => !Number.isFinite(x) || x < 0 || x > 70)) bad('Tiap matra maksimal 70% dan tidak boleh negatif'); const sum = v.darat + v.udara + v.art + v.intel; if (Math.abs(sum - 100) > 0.6) bad('Total alokasi harus 100%');
-  if ((pr.data.gov.alloc?.year ?? -99) >= w.year) bad('Alokasi Anggaran Keamanan hanya dapat diubah sekali per tahun simulasi');
   await cas(pr.code, d => { d.gov.alloc = { year: w.year, a: v }; }); return { ok: true, alloc: v };
 };
 A.war_fund = async ({ u, body }) => {
@@ -60,23 +59,23 @@ A.war_fund = async ({ u, body }) => {
 };
 A.war_mobilize = async ({ u, body }) => {
   const pr = await needPres(u, body.session), w = await world(); let ready = 0, cost = 0;
-  const ok = await cas(pr.code, d => { if ((d.gov.mobYear ?? -99) >= w.year) return false; cost = r2(d.gdp * 0.004); if (d.treasury < cost) return false; d.treasury = r2(d.treasury - cost); d.gov.mobYear = w.year; d.gov.readiness = clamp((d.gov.readiness ?? 50) + 8, 0, 100); d.gov.stability = clamp(d.gov.stability - 1, 0, 100); d.gov.approval = clamp(d.gov.approval - 0.5, 0, 100); ready = d.gov.readiness; }); if (!ok) bad('Mobilisasi hanya sekali per tahun simulasi dan butuh kas cukup');
+  const ok = await cas(pr.code, d => { cost = r2(d.gdp * 0.004); if (d.treasury < cost) return false; d.treasury = r2(d.treasury - cost); d.gov.mobYear = w.year; d.gov.readiness = clamp((d.gov.readiness ?? 50) + 8, 0, 100); d.gov.stability = clamp(d.gov.stability - 1, 0, 100); d.gov.approval = clamp(d.gov.approval - 0.5, 0, 100); ready = d.gov.readiness; }); if (!ok) bad('Kas negara tidak cukup untuk mobilisasi');
   return { ok: true, readiness: Math.round(ready), cost };
 };
 A.war_start = async ({ u, body }) => {
   const { row: pr, role } = await actor(u, body.session), vp = role === 'wapres', w = await world(), enemy = String(body.enemy || '').toUpperCase(), alloc = clamp(Math.round(Number(body.alloc) || 0), MIN_ALLOC, MAX_ALLOC);
-  if (!(pr.data.war || []).includes(enemy)) bad('Negara Anda tidak sedang berperang dengan negara itu'); const bb = pr.data.gov.battles?.year === w.year ? pr.data.gov.battles : {}, b = (vp ? bb.vp : bb.list) || []; if (b.includes(enemy)) bad('Pertempuran melawan negara ini sudah dihitung tahun ini (latihan tetap bisa)');
+  if (!(pr.data.war || []).includes(enemy)) bad('Negara Anda tidak sedang berperang dengan negara itu');
   let fund = 0; const ok = await cas(pr.code, d => { const wf = accrue(d, w.year); if (wf.m < alloc) return false; wf.m -= alloc; fund = wf.m; d.gov[vp ? 'warOpVp' : 'warOp'] = { enemy, alloc, ts: Date.now(), year: w.year }; }); if (!ok) bad('Anggaran Perang tidak cukup. Danai dari kas negara atau kurangi alokasi.');
   const g = (await sb.from('cm_countries').select('data').eq('code', pr.code).single()).data.data.gov; return { ok: true, fund, alloc, role, shares: shares(g.alloc?.a || ALLOC0), readiness: Math.round(g.readiness ?? 50) };
 };
 const FX = { menang: { a: 2, s: 1, g: 0.4, rd: -1, ea: -1, eg: -0.8, er: -4 }, seri: { a: -1, s: -1, g: -0.4, rd: -2, ea: -0.5, eg: -0.4, er: -2 }, kalah: { a: -3, s: -2, g: -1.2, rd: -5, ea: 1, eg: 0.3, er: -1 } };
 A.war_result = async ({ u, body }) => {
   const { row: pr, role } = await actor(u, body.session), vp = role === 'wapres', OPK = vp ? 'warOpVp' : 'warOp', w = await world(), enemy = String(body.enemy || '').toUpperCase(), outcome = String(body.outcome || ''), margin = clamp(Math.round(Number(body.margin) || 0), 0, 100), secs = Number(body.secs) || 0;
-  if (!FX[outcome]) bad('Hasil tidak valid'); const op = pr.data.gov[OPK]; if (!op || op.enemy !== enemy || op.year !== w.year || Date.now() - op.ts > 40 * 60_000) bad('Mulai pertempuran lewat Medan Perang 3D terlebih dahulu'); if (secs < 25) bad('Pertempuran terlalu singkat untuk dihitung');
+  if (!FX[outcome]) bad('Hasil tidak valid'); const op = pr.data.gov[OPK]; if (!op || op.enemy !== enemy || Date.now() - op.ts > 40 * 60_000) bad('Mulai pertempuran lewat Medan Perang 3D terlebih dahulu'); if (secs < 25) bad('Pertempuran terlalu singkat untuk dihitung');
   const nukes = clamp(Math.round(Number(body.nukes) || 0), 0, 1), nuked = clamp(Math.round(Number(body.nuked) || 0), 0, 1), spent = clamp(Math.round(Number(body.spent) || 0), 0, op.alloc), refund = r0((op.alloc - spent) * 0.8);
   const heroKills = clamp(Math.round(Number(body.heroKills) || 0), 0, 200), heroDeaths = clamp(Math.round(Number(body.heroDeaths) || 0), 0, 20), heroic = outcome === 'menang' && heroKills >= 8 ? 1 : 0, reckless = heroDeaths >= 2 ? 1 : 0, sc = vp ? .6 : 1;
   const f = FX[outcome], k = clamp(0.6 + margin / 100 * 0.8, 0.6, 1.4) * sc, er = must(await sb.from('cm_countries').select('data,president_uid').eq('code', enemy).maybeSingle()), en = er?.data?.name || enemy;
-  const ok = await cas(pr.code, d => { const o = d.gov[OPK]; if (!o || o.enemy !== enemy || o.year !== w.year) return false; delete d.gov[OPK]; const B = d.gov.battles?.year === w.year ? d.gov.battles : { year: w.year, list: [], vp: [] }; d.gov.battles = { year: w.year, list: vp ? B.list || [] : [...(B.list || []), enemy], vp: vp ? [...(B.vp || []), enemy] : B.vp || [] }; const wf = accrue(d, w.year); wf.m = r0(wf.m + refund);
+  const ok = await cas(pr.code, d => { const o = d.gov[OPK]; if (!o || o.enemy !== enemy) return false; delete d.gov[OPK]; const B = d.gov.battles?.year === w.year ? d.gov.battles : { year: w.year, list: [], vp: [] }; d.gov.battles = { year: w.year, list: vp ? B.list || [] : [...(B.list || []), enemy], vp: vp ? [...(B.vp || []), enemy] : B.vp || [] }; const wf = accrue(d, w.year); wf.m = r0(wf.m + refund);
     d.gov.approval = clamp(d.gov.approval + f.a * k - (nukes ? 2 : 0) - (nuked ? 3 : 0) + heroic * 1 - reckless * 1, 0, 100); d.gov.stability = clamp(d.gov.stability + f.s - (nukes ? 3 : 0) - (nuked ? 3 : 0), 0, 100); d.gdp = r2(d.gdp * (1 + (f.g - (nuked ? 1.5 : 0)) / 100)); d.gov.readiness = clamp((d.gov.readiness ?? 50) + f.rd, 0, 100);
     if (nukes) { d.gov.trust = clamp(d.gov.trust - 8, 0, 100); d.gov.nukes = (d.gov.nukes || 0) + 1; d.gov.invest = clamp((d.gov.invest ?? 50) - 4, 0, 100); } });
   if (!ok) bad('Pertempuran sudah dihitung, coba lagi');
